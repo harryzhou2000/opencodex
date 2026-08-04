@@ -139,7 +139,18 @@ describe("Codex config injection", () => {
     expect(profile).not.toContain('model_provider = "opencodex"');
     expect(profile).not.toContain("[model_providers.opencodex]");
     expect(profile).not.toContain("model_catalog_json");
-    expect(profile).toContain("fast_mode = true");
+  });
+
+  test("fallback profile does not force fast_mode when fastMode is unset", () => {
+    expect(buildProfileFile(10100, null)).not.toContain("fast_mode");
+    expect(buildProfileFile(10100, null, false, true, "192.168.1.20")).not.toContain("fast_mode");
+  });
+
+  test("fallback profile mirrors an explicit fastMode=true override", () => {
+    const loopback = buildProfileFile(10100, null, false, false, undefined, true);
+
+    expect(loopback).toContain("fast_mode = true");
+    expect(loopback).not.toContain("fast_mode = false");
   });
 
   test("fallback profile mirrors an explicit fastMode=false override", () => {

@@ -401,9 +401,12 @@ function ensureFastModeFeature(content: string, fastMode?: boolean): string {
   // Tri-state fast mode (see OcxConfig.fastMode): true forces `fast_mode = true`,
   // false forces `fast_mode = false`, and undefined leaves the user's config
   // untouched (no [features] table is added and an existing fast_mode line is
-  // preserved as-is).
+  // preserved as-is). Table and key matching accept the valid TOML spellings
+  // `[features] # comment`, `["features"]` / `['features']`, and quoted keys.
   const lines = content.split("\n");
-  const featuresStart = lines.findIndex(line => line.trim() === "[features]");
+  const featuresHeader = /^\s*\[(["']?)\s*features\s*\1\]\s*(?:#.*)?$/;
+  const fastModeKey = /^\s*(?:"fast_mode"|'fast_mode'|fast_mode)\s*=/;
+  const featuresStart = lines.findIndex(line => featuresHeader.test(line));
   if (featuresStart === -1) {
     if (fastMode === undefined) return content;
     return content.trimEnd() + "\n\n[features]\nfast_mode = " + (fastMode ? "true" : "false") + "\n";
@@ -412,9 +415,9 @@ function ensureFastModeFeature(content: string, fastMode?: boolean): string {
   const nextTable = lines.findIndex((line, index) => index > featuresStart && /^\s*\[/.test(line));
   const featuresEnd = nextTable === -1 ? lines.length : nextTable;
   for (let i = featuresStart + 1; i < featuresEnd; i++) {
-    if (/^\s*fast_mode\s*=/.test(lines[i])) {
+    if (fastModeKey.test(lines[i])) {
       if (fastMode === undefined) return lines.join("\n");
-      lines[i] = lines[i].replace(/^(\s*)fast_mode\s*=.*$/, `$1fast_mode = ${fastMode ? "true" : "false"}`);
+      lines[i] = lines[i].replace(/^(\s*)(?:"fast_mode"|'fast_mode'|fast_mode)\s*=.*$/, `$1fast_mode = ${fastMode ? "true" : "false"}`);
       return lines.join("\n");
     }
   }
@@ -440,7 +443,7 @@ function stripOpencodexCatalogPath(content: string): string {
     .join("\n");
 }
 
-export function buildProfileFile(port: number, catalogPath?: string | null, supportsWebsockets = false, includeApiAuthHeader = false, hostname?: string, fastMode = true): string {
+export function buildProfileFile(port: number, catalogPath?: string | null, supportsWebsockets = false, includeApiAuthHeader = false, hostname?: string, fastMode?: boolean): string {
   const host = providerBaseHost(hostname);
   // Design B (loopback): the reference/fallback file documents the root override form.
   // Non-loopback keeps the legacy provider-table shape (built-in provider cannot carry
@@ -453,7 +456,7 @@ export function buildProfileFile(port: number, catalogPath?: string | null, supp
       buildOpenaiBaseUrlLine(port, hostname),
     ];
     if (catalogPath) lines.push(`model_catalog_json = ${tomlString(catalogPath)}`);
-    lines.push("", "[features]", `fast_mode = ${fastMode ? "true" : "false"}`, "");
+    if (fastMode !== undefined) lines.push("", "[features]", `fast_mode = ${fastMode ? "true" : "false"}`, "");
     return lines.join("\n");
   }
   const lines = [
@@ -462,7 +465,7 @@ export function buildProfileFile(port: number, catalogPath?: string | null, supp
     'model_provider = "opencodex"',
   ];
   if (catalogPath) lines.push(`model_catalog_json = ${tomlString(catalogPath)}`);
-  lines.push("", "[features]", `fast_mode = ${fastMode ? "true" : "false"}`);
+  if (fastMode !== undefined) lines.push("", "[features]", `fast_mode = ${fastMode ? "true" : "false"}`);
   lines.push(buildProviderTableBlock(port, supportsWebsockets, includeApiAuthHeader, hostname).trimEnd(), "");
   return lines.join("\n");
 }
