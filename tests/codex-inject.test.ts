@@ -142,6 +142,17 @@ describe("Codex config injection", () => {
     expect(profile).toContain("fast_mode = true");
   });
 
+  test("fallback profile mirrors an explicit fastMode=false override", () => {
+    const loopback = buildProfileFile(10100, null, false, false, undefined, false);
+
+    expect(loopback).toContain("fast_mode = false");
+    expect(loopback).not.toContain("fast_mode = true");
+
+    const legacy = buildProfileFile(10100, null, false, true, "192.168.1.20", false);
+    expect(legacy).toContain("fast_mode = false");
+    expect(legacy).not.toContain("fast_mode = true");
+  });
+
   test("non-loopback fallback profile keeps the legacy provider-table shape with the injected host", () => {
     const profile = buildProfileFile(10100, null, false, true, "192.168.1.20");
 
