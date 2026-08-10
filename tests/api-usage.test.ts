@@ -7,6 +7,7 @@ import { saveConfig } from "../src/config";
 import { startServer } from "../src/server";
 import type { OcxConfig } from "../src/types";
 import { refreshUserCostOverlays, userCostOverlayVersion } from "../src/usage/user-cost-overlays";
+import { stopUserCostOverlayReconciler } from "../src/usage/user-cost-overlay-reconciler";
 import { installIsolatedCodexHome, type IsolatedCodexHome } from "./helpers/isolated-codex-home";
 import { resetUsageReadCacheForTests, usageReadCacheStatsForTests } from "../src/usage/log";
 import * as usageLogModule from "../src/usage/log";
@@ -79,6 +80,10 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // Belt-and-suspenders: server.stop should release the reconciler lease, but a
+  // wedged shutdown on Linux CI must not leave the 5s poll timer keeping the
+  // isolate worker alive for later shard files (e.g. cli-restore-back).
+  stopUserCostOverlayReconciler();
   if (previousHome === undefined) delete process.env.OPENCODEX_HOME;
   else process.env.OPENCODEX_HOME = previousHome;
   isolatedCodexHome?.restore();
