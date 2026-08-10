@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { getConfigPath, loadConfig, readConfigDiagnostics, saveConfig } from "../src/config";
+import { getConfigPath, loadConfig, saveConfig } from "../src/config";
 import { resolveMatchedPrice } from "../src/usage/cost";
 import {
   activeUserCostOverlays,
@@ -16,6 +16,7 @@ import {
   resetUserCostOverlayReconcilerForTests,
   startUserCostOverlayReconciler,
   stopUserCostOverlayReconciler,
+  userCostOverlayInvalidReconcileCountForTests,
 } from "../src/usage/user-cost-overlay-reconciler";
 import type { OcxConfig } from "../src/types";
 
@@ -181,8 +182,9 @@ describe("cross-process user cost overlay reconciliation", () => {
     // A non-cooperating writer leaves a transient broken file; the reconciler
     // must keep serving the last good overlay instead of falling back to
     // defaults.
+    const invalidCountBefore = userCostOverlayInvalidReconcileCountForTests();
     writeFileSync(getConfigPath(), "{ not json", "utf8");
-    await waitUntil(() => readConfigDiagnostics().source === "fallback");
+    await waitUntil(() => userCostOverlayInvalidReconcileCountForTests() > invalidCountBefore);
 
     expect(resolveMatchedPrice("acme", "model-x")?.source).toBe("user");
   });
