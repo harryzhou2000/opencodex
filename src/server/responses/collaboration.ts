@@ -396,11 +396,30 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
-function isGeneratedDeveloperItem(item: unknown, text: string): boolean {
-  if (!isRecord(item) || item.type !== "message" || item.role !== "developer") return false;
-  if (!Array.isArray(item.content) || item.content.length !== 1) return false;
+function generatedDeveloperText(item: unknown): string | undefined {
+  if (!isRecord(item) || item.type !== "message" || item.role !== "developer") return undefined;
+  if (!Array.isArray(item.content) || item.content.length !== 1) return undefined;
   const [part] = item.content;
-  return isRecord(part) && part.type === "input_text" && part.text === text;
+  return isRecord(part) && part.type === "input_text" && typeof part.text === "string"
+    ? part.text
+    : undefined;
+}
+
+function isGeneratedDeveloperItem(item: unknown, text: string): boolean {
+  return generatedDeveloperText(item) === text;
+}
+
+function isDeveloperPrefixItem(item: unknown): boolean {
+  if (!isRecord(item)) return false;
+  if (item.type === "additional_tools") return item.role === "developer";
+  const type = item.type ?? (typeof item.role === "string" ? "message" : undefined);
+  return type === "message" && (item.role === "system" || item.role === "developer");
+}
+
+function leadingDeveloperPrefixLength(items: readonly unknown[]): number {
+  let index = 0;
+  while (index < items.length && isDeveloperPrefixItem(items[index])) index += 1;
+  return index;
 }
 
 export function injectDeveloperMessage(parsed: OcxParsedRequest, text: string): void {
@@ -408,20 +427,39 @@ export function injectDeveloperMessage(parsed: OcxParsedRequest, text: string): 
   const devItem = { type: "message", role: "developer", content: [{ type: "input_text", text }] };
   if (raw && Array.isArray(raw.input)) {
     const replayPrefixLen = Math.min(parsed._replayPrefixLen ?? 0, raw.input.length);
-    if (raw.input.slice(0, replayPrefixLen).some(item => isGeneratedDeveloperItem(item, text))) {
+    const replayPrefix = raw.input.slice(0, replayPrefixLen);
+    const taggedGuidance = text.startsWith("<multi_agent_mode>") && text.endsWith("</multi_agent_mode>");
+    const lastTaggedGuidance = taggedGuidance
+      ? replayPrefix.map(generatedDeveloperText)
+        .filter(item => item?.startsWith("<multi_agent_mode>") && item.endsWith("</multi_agent_mode>"))
+        .at(-1)
+      : undefined;
+    if (taggedGuidance ? lastTaggedGuidance === text : replayPrefix.some(item => isGeneratedDeveloperItem(item, text))) {
       return;
     }
   }
 
-  parsed.context.messages.push({ role: "developer", content: text, timestamp: Date.now() });
+  const statefulContinuation = parsed.previousResponseId !== undefined;
+  const message = { role: "developer" as const, content: text, timestamp: Date.now() };
+
+  // A previous_response_id delta can begin with a tool result, and changed replayed guidance must
+  // remain earlier than its replacement. Stateless requests can keep guidance in the prefix.
+  if (statefulContinuation) {
+    parsed.context.messages.push(message);
+  } else {
+    const prefixLen = parsed.context.messages.findIndex(item => item.role !== "developer");
+    parsed.context.messages.splice(prefixLen < 0 ? parsed.context.messages.length : prefixLen, 0, message);
+  }
+
   if (raw && Array.isArray(raw.input)) {
-    // compaction_trigger must remain the final input item (codex-rs + ChatGPT backend both
-    // validate this). Insert the developer message BEFORE the trigger when present.
-    const last = raw.input[raw.input.length - 1];
-    if (last && typeof last === "object" && (last as { type?: string }).type === "compaction_trigger") {
-      raw.input.splice(raw.input.length - 1, 0, devItem);
+    if (statefulContinuation) {
+      const last = raw.input[raw.input.length - 1];
+      const index = isRecord(last) && last.type === "compaction_trigger"
+        ? raw.input.length - 1
+        : raw.input.length;
+      raw.input.splice(index, 0, devItem);
     } else {
-      raw.input.push(devItem);
+      raw.input.splice(leadingDeveloperPrefixLength(raw.input), 0, devItem);
     }
   }
 }
