@@ -974,6 +974,68 @@ describe("injectDeveloperMessage", () => {
     expect(parsed.context.messages.at(-1)).toMatchObject({ role: "developer", content: guidance });
   });
 
+  test("inserts changed stateful guidance before an ordinary new user delta", () => {
+    const guidanceA = "<multi_agent_mode>A</multi_agent_mode>";
+    const guidanceB = "<multi_agent_mode>B</multi_agent_mode>";
+    const rawInput = [
+      generatedItem(guidanceA),
+      { type: "message", role: "user", content: "previous turn" },
+      { type: "message", role: "assistant", content: "done" },
+      { type: "message", role: "user", content: "current turn" },
+    ];
+    const parsed = parseRequest({ model: "gpt-5.5", input: rawInput });
+    parsed.previousResponseId = "resp_1";
+    parsed._replayPrefixLen = 3;
+    parsed._continuationConversationMessageIndex = 3;
+
+    injectDeveloperMessage(parsed, guidanceB);
+
+    expect(rawInput).toEqual([
+      generatedItem(guidanceA),
+      { type: "message", role: "user", content: "previous turn" },
+      { type: "message", role: "assistant", content: "done" },
+      generatedItem(guidanceB),
+      { type: "message", role: "user", content: "current turn" },
+    ]);
+    expect(parsed.context.messages.map(message => message.role)).toEqual([
+      "developer",
+      "user",
+      "assistant",
+      "developer",
+      "user",
+    ]);
+  });
+
+  test("keeps leading stateful protocol items before changed guidance and conversation", () => {
+    const rawInput = [
+      { type: "function_call_output", call_id: "call_1", output: "ok" },
+      { type: "message", role: "user", content: "current turn" },
+    ];
+    const parsed = parseRequest({ model: "gpt-5.5", input: rawInput, previous_response_id: "resp_remote" });
+
+    injectDeveloperMessage(parsed, guidance);
+
+    expect(rawInput).toEqual([
+      { type: "function_call_output", call_id: "call_1", output: "ok" },
+      generatedItem(),
+      { type: "message", role: "user", content: "current turn" },
+    ]);
+    expect(parsed.context.messages.map(message => message.role)).toEqual(["toolResult", "developer", "user"]);
+  });
+
+  test("keeps raw and parsed stateful placement aligned across reconstructed compaction history", () => {
+    const rawInput = [
+      { type: "message", role: "user", content: "current turn" },
+      { type: "compaction", encrypted_content: "ocx1:c3VtbWFyeQ==" },
+    ];
+    const parsed = parseRequest({ model: "gpt-5.5", input: rawInput, previous_response_id: "resp_remote" });
+
+    injectDeveloperMessage(parsed, guidance);
+
+    expect(rawInput[0]).toEqual(generatedItem());
+    expect(parsed.context.messages.map(message => message.role)).toEqual(["developer", "user", "user"]);
+  });
+
   test("stateful guidance dedup uses the latest tagged item across A-B-A transitions", () => {
     const guidanceA = "<multi_agent_mode>A</multi_agent_mode>";
     const guidanceB = "<multi_agent_mode>B</multi_agent_mode>";

@@ -422,12 +422,32 @@ function leadingDeveloperPrefixLength(items: readonly unknown[]): number {
   return index;
 }
 
+function isConversationalItem(item: unknown): boolean {
+  if (!isRecord(item)) return false;
+  if (item.type === "agent_message") return true;
+  const type = item.type ?? (typeof item.role === "string" ? "message" : undefined);
+  return type === "message" && (item.role === "user" || item.role === "assistant");
+}
+
+function statefulRawInsertionIndex(items: readonly unknown[], replayPrefixLen: number): number {
+  for (let index = replayPrefixLen; index < items.length; index += 1) {
+    if (isConversationalItem(items[index])) return index;
+  }
+  const last = items[items.length - 1];
+  return isRecord(last) && last.type === "compaction_trigger"
+    ? items.length - 1
+    : items.length;
+}
+
 export function injectDeveloperMessage(parsed: OcxParsedRequest, text: string): void {
   const raw = parsed._rawBody as { input?: unknown } | undefined;
+  const rawInput = raw && Array.isArray(raw.input) ? raw.input : undefined;
+  const replayPrefixLen = rawInput
+    ? Math.min(parsed._replayPrefixLen ?? 0, rawInput.length)
+    : 0;
   const devItem = { type: "message", role: "developer", content: [{ type: "input_text", text }] };
-  if (raw && Array.isArray(raw.input)) {
-    const replayPrefixLen = Math.min(parsed._replayPrefixLen ?? 0, raw.input.length);
-    const replayPrefix = raw.input.slice(0, replayPrefixLen);
+  if (rawInput) {
+    const replayPrefix = rawInput.slice(0, replayPrefixLen);
     const taggedGuidance = text.startsWith("<multi_agent_mode>") && text.endsWith("</multi_agent_mode>");
     const lastTaggedGuidance = taggedGuidance
       ? replayPrefix.map(generatedDeveloperText)
@@ -441,25 +461,28 @@ export function injectDeveloperMessage(parsed: OcxParsedRequest, text: string): 
 
   const statefulContinuation = parsed.previousResponseId !== undefined;
   const message = { role: "developer" as const, content: text, timestamp: Date.now() };
+  const statefulRawIndex = statefulContinuation && rawInput
+    ? statefulRawInsertionIndex(rawInput, replayPrefixLen)
+    : undefined;
 
-  // A previous_response_id delta can begin with a tool result, and changed replayed guidance must
-  // remain earlier than its replacement. Stateless requests can keep guidance in the prefix.
+  // A previous_response_id delta can begin with tool/protocol items. Keep those first, then place
+  // changed guidance before the current conversation. Stateless requests keep guidance in the prefix.
   if (statefulContinuation) {
-    parsed.context.messages.push(message);
+    const index = Math.min(
+      parsed._continuationConversationMessageIndex ?? parsed.context.messages.length,
+      parsed.context.messages.length,
+    );
+    parsed.context.messages.splice(index, 0, message);
   } else {
     const prefixLen = parsed.context.messages.findIndex(item => item.role !== "developer");
     parsed.context.messages.splice(prefixLen < 0 ? parsed.context.messages.length : prefixLen, 0, message);
   }
 
-  if (raw && Array.isArray(raw.input)) {
+  if (rawInput) {
     if (statefulContinuation) {
-      const last = raw.input[raw.input.length - 1];
-      const index = isRecord(last) && last.type === "compaction_trigger"
-        ? raw.input.length - 1
-        : raw.input.length;
-      raw.input.splice(index, 0, devItem);
+      rawInput.splice(statefulRawIndex!, 0, devItem);
     } else {
-      raw.input.splice(leadingDeveloperPrefixLength(raw.input), 0, devItem);
+      rawInput.splice(leadingDeveloperPrefixLength(rawInput), 0, devItem);
     }
   }
 }
