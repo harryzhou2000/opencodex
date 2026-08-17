@@ -80,6 +80,11 @@ let previousCodexHome: string | undefined;
 let previousManualImportEnv: string | undefined;
 let previousFetch: typeof fetch;
 
+function jwtWithExp(exp: number): string {
+  const enc = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  return enc({ alg: "RS256", typ: "JWT" }) + "." + enc({ exp }) + ".sig";
+}
+
 function makeConfig(overrides: Partial<OcxConfig> = {}): OcxConfig {
   return {
     port: 10100,
@@ -742,9 +747,9 @@ describe("codex-auth API", () => {
     expect(main?.needsReauth).toBe(true);
   });
 
-  test("main account 401 marks needsReauth and exposes it in the DTO (#327)", async () => {
+  test("bare main account 401 with a live token is transient, not reauth", async () => {
     writeFileSync(join(TEST_CODEX_HOME, "auth.json"), JSON.stringify({
-      tokens: { access_token: "expired-main", account_id: "acct-main" },
+      tokens: { access_token: "live-main", account_id: "acct-main" },
     }));
     globalThis.fetch = (async () => new Response("", { status: 401 })) as typeof fetch;
 
@@ -753,8 +758,23 @@ describe("codex-auth API", () => {
     const data = await resp!.json() as { accounts: Array<{ id: string; hasCredential: boolean; needsReauth?: boolean }> };
     const main = data.accounts.find(account => account.id === MAIN_CODEX_ACCOUNT_ID);
 
-    expect(main).toMatchObject({ hasCredential: true, needsReauth: true });
+    expect(main).toMatchObject({ hasCredential: true, needsReauth: false });
+    expect(isAccountNeedsReauth(MAIN_CODEX_ACCOUNT_ID)).toBe(false);
+  });
+
+  test("main account 401 with an expired access token is terminal", async () => {
+    writeFileSync(join(TEST_CODEX_HOME, "auth.json"), JSON.stringify({
+      tokens: { access_token: jwtWithExp(1), account_id: "acct-main" },
+    }));
+    globalThis.fetch = (async () => new Response("", { status: 401 })) as typeof fetch;
+
+    const req = new Request("http://localhost/api/codex-auth/accounts?refresh=1");
+    const resp = await handleCodexAuthAPI(req, new URL(req.url), makeConfig());
+    const data = await resp!.json() as { accounts: Array<{ id: string; needsReauth?: boolean }> };
+
+    expect(data.accounts.find(account => account.id === MAIN_CODEX_ACCOUNT_ID)?.needsReauth).toBe(true);
     expect(isAccountNeedsReauth(MAIN_CODEX_ACCOUNT_ID)).toBe(true);
+    clearAccountNeedsReauth(MAIN_CODEX_ACCOUNT_ID);
   });
 
   test("main account invalid-workspace 403 is terminal but a generic 403 is not (#327)", async () => {
@@ -803,7 +823,7 @@ describe("codex-auth API", () => {
     expect(isAccountNeedsReauth(MAIN_CODEX_ACCOUNT_ID)).toBe(false);
   });
 
-  test("BUG-R327: main account exposes and updates needsReauth from WHAM auth responses", async () => {
+  test("BUG-R327: main account exposes and updates needsReauth from terminal WHAM auth responses", async () => {
     writeFileSync(join(TEST_CODEX_HOME, "auth.json"), JSON.stringify({
       tokens: {
         access_token: "main-access",
@@ -828,9 +848,10 @@ describe("codex-auth API", () => {
       return data.accounts.find(account => account.id === "__main__")!;
     };
 
-    expect((await listMain()).needsReauth).toBe(true);
+    // A bare 401 with a still-live token is transient: it must not mark reauth.
+    expect((await listMain()).needsReauth).toBe(false);
     status = 403;
-    expect((await listMain()).needsReauth).toBe(true);
+    expect((await listMain()).needsReauth).toBe(false);
     status = 200;
     expect((await listMain()).needsReauth).toBe(false);
   });
