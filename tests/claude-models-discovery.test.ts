@@ -6,6 +6,7 @@ import { saveConfig } from "../src/config";
 import { handleManagementAPI } from "../src/server/management-api";
 import { startServer } from "../src/server";
 import type { OcxConfig } from "../src/types";
+import { NATIVE_GPT56_CONTEXT_WINDOW, NATIVE_GPT56_MAX_CONTEXT_WINDOW } from "../src/codex/catalog";
 import { installIsolatedCodexHome, type IsolatedCodexHome } from "./helpers/isolated-codex-home";
 import { ManagementRequest } from "./helpers/management-auth";
 
@@ -165,7 +166,7 @@ test("Codex discovery applies the OpenAI context cap to native rows (#1430)", as
     baseUrl: "https://chatgpt.com/backend-api/codex",
     liveModels: false,
   };
-  config.providerContextCaps = { openai: 272_000 };
+  config.providerContextCaps = { openai: NATIVE_GPT56_CONTEXT_WINDOW };
   saveConfig(config);
   const server = startServer(0);
   try {
@@ -180,9 +181,9 @@ test("Codex discovery applies the OpenAI context cap to native rows (#1430)", as
       }>;
     };
     expect(json.models.find(model => model.slug === "gpt-5.6-sol")).toMatchObject({
-      context_window: 272_000,
-      max_context_window: 272_000,
-      auto_compact_token_limit: 244_800,
+      context_window: NATIVE_GPT56_CONTEXT_WINDOW,
+      max_context_window: NATIVE_GPT56_MAX_CONTEXT_WINDOW,
+      auto_compact_token_limit: Math.floor(NATIVE_GPT56_CONTEXT_WINDOW * 0.9),
     });
   } finally {
     await server.stop(true);

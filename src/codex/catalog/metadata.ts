@@ -137,6 +137,17 @@ export const NATIVE_GPT56_MAX_INPUT_TOKENS = 922_000;
 /** User-facing 1M opt-in: the largest window the native 5.6 family may advertise. */
 export const NATIVE_GPT56_OPT_IN_CONTEXT_WINDOW = NATIVE_GPT56_MAX_INPUT_TOKENS;
 
+/**
+ * The native/upstream advertised max for the GPT-5.6 family.
+ *
+ * The live Codex catalog reports context_window 272000 against
+ * max_context_window 872000 (devlog E1). That upstream max is the default
+ * ceiling the catalog should advertise; the measured 922k ceiling
+ * (NATIVE_GPT56_MAX_INPUT_TOKENS) stays the opt-in target that user levers
+ * may raise to.
+ */
+export const NATIVE_GPT56_MAX_CONTEXT_WINDOW = 872_000;
+
 const NATIVE_GPT56_FAMILY = new Set<string>([
   "gpt-5.6-sol",
   "gpt-5.6-terra",
@@ -148,15 +159,15 @@ export const NATIVE_OPENAI_CONTEXT_OVERRIDES: Record<string, { contextWindow?: n
   "gpt-5.5": { contextWindow: 272_000, maxContextWindow: 272_000 },
   "gpt-5.4": { contextWindow: 1_000_000, maxContextWindow: 1_000_000 },
   "gpt-5.3-codex-spark": { contextWindow: 100_000, maxContextWindow: 100_000 },
-  "gpt-5.6-sol": { contextWindow: NATIVE_GPT56_CONTEXT_WINDOW, maxContextWindow: NATIVE_GPT56_MAX_INPUT_TOKENS, maxInputTokens: NATIVE_GPT56_MAX_INPUT_TOKENS },
-  "gpt-5.6-terra": { contextWindow: NATIVE_GPT56_CONTEXT_WINDOW, maxContextWindow: NATIVE_GPT56_MAX_INPUT_TOKENS, maxInputTokens: NATIVE_GPT56_MAX_INPUT_TOKENS },
-  "gpt-5.6-luna": { contextWindow: NATIVE_GPT56_CONTEXT_WINDOW, maxContextWindow: NATIVE_GPT56_MAX_INPUT_TOKENS, maxInputTokens: NATIVE_GPT56_MAX_INPUT_TOKENS },
+  "gpt-5.6-sol": { contextWindow: NATIVE_GPT56_CONTEXT_WINDOW, maxContextWindow: NATIVE_GPT56_MAX_CONTEXT_WINDOW, maxInputTokens: NATIVE_GPT56_MAX_INPUT_TOKENS },
+  "gpt-5.6-terra": { contextWindow: NATIVE_GPT56_CONTEXT_WINDOW, maxContextWindow: NATIVE_GPT56_MAX_CONTEXT_WINDOW, maxInputTokens: NATIVE_GPT56_MAX_INPUT_TOKENS },
+  "gpt-5.6-luna": { contextWindow: NATIVE_GPT56_CONTEXT_WINDOW, maxContextWindow: NATIVE_GPT56_MAX_CONTEXT_WINDOW, maxInputTokens: NATIVE_GPT56_MAX_INPUT_TOKENS },
   // Daybreak Blue borrows Sol's capability metadata and rides the same family contract.
   // Unlike sol/terra/luna its window was NOT measured here: this account cannot reach it
   // (`400 "The 'gpt-daybreak-blue-latest' model is not supported when using Codex with a
   // ChatGPT account."`), so the promotion rests on a report from an account that has
   // access rather than on a probe. Treat it as the weaker evidence of the four.
-  [NATIVE_DAYBREAK_BLUE_MODEL]: { contextWindow: NATIVE_GPT56_CONTEXT_WINDOW, maxContextWindow: NATIVE_GPT56_MAX_INPUT_TOKENS, maxInputTokens: NATIVE_GPT56_MAX_INPUT_TOKENS },
+  [NATIVE_DAYBREAK_BLUE_MODEL]: { contextWindow: NATIVE_GPT56_CONTEXT_WINDOW, maxContextWindow: NATIVE_GPT56_MAX_CONTEXT_WINDOW, maxInputTokens: NATIVE_GPT56_MAX_INPUT_TOKENS },
 };
 
 const PINNED_UPSTREAM_MODELS: Map<string, RawEntry> = new Map(

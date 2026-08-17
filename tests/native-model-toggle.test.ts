@@ -9,6 +9,9 @@ import {
   desktopAllowlistSuppressedNativeSlugs,
   disabledNativeSlugs,
   mergeCatalogEntriesForSync,
+  NATIVE_GPT56_CONTEXT_WINDOW,
+  NATIVE_GPT56_MAX_CONTEXT_WINDOW,
+  NATIVE_GPT56_MAX_INPUT_TOKENS,
   NATIVE_OPENAI_MODELS,
   nativeContextLimits,
   nativeModelRows,
@@ -69,7 +72,7 @@ describe("native GPT model toggles (bare slugs in disabledModels)", () => {
     expect(rows.find(r => r.slug === "gpt-5.6-sol")?.disabled).toBe(true);
     expect(rows.find(r => r.slug === "gpt-5.5")?.disabled).toBe(false);
     // Known context metadata rides along for the dashboard.
-    expect(rows.find(r => r.slug === "gpt-5.6-sol")?.contextWindow).toBe(272_000);
+    expect(rows.find(r => r.slug === "gpt-5.6-sol")?.contextWindow).toBe(NATIVE_GPT56_CONTEXT_WINDOW);
   });
 
   test("a per-model window sets the native row and never exceeds the measured ceiling", () => {
@@ -82,31 +85,59 @@ describe("native GPT model toggles (bare slugs in disabledModels)", () => {
     // window would be the same over-advertising this unit exists to fix.
     expect(rows.find(r => r.slug === "gpt-5.6-sol")?.maxInputTokens).toBe(500_000);
     // A sibling slug is untouched: this lever is per-model.
-    expect(rows.find(r => r.slug === "gpt-5.6-terra")?.contextWindow).toBe(272_000);
+    expect(rows.find(r => r.slug === "gpt-5.6-terra")?.contextWindow).toBe(NATIVE_GPT56_CONTEXT_WINDOW);
 
     // Above the measured ceiling the overlay is inert. A user value must never widen what the
     // upstream actually accepts.
     const tooWide = { providers: { openai: { modelContextWindows: { "gpt-5.6-sol": 2_000_000 } } } } as never;
-    expect(nativeModelRows(tooWide).find(r => r.slug === "gpt-5.6-sol")?.contextWindow).toBe(922_000);
+    expect(nativeModelRows(tooWide).find(r => r.slug === "gpt-5.6-sol")?.contextWindow).toBe(NATIVE_GPT56_MAX_INPUT_TOKENS);
 
     // provider-wide window applies to every native slug, and the cap still wins when lower.
+    const providerWindow = 500_000;
+    const cap = 350_000;
     const both = {
-      providers: { openai: { contextWindow: 500_000 } },
-      providerContextCaps: { openai: 350_000 },
+      providers: { openai: { contextWindow: providerWindow } },
+      providerContextCaps: { openai: cap },
     } as never;
-    expect(nativeModelRows(both).find(r => r.slug === "gpt-5.6-sol")?.contextWindow).toBe(350_000);
+    expect(nativeModelRows(both).find(r => r.slug === "gpt-5.6-sol")?.contextWindow).toBe(cap);
   });
 
-  test("the on-disk catalog entry lands at the same width as the dashboard row", () => {
+  test("a raised on-disk window keeps the native max above the operating window", () => {
     // Regression: applyNativeOpenAiContextOverride used to re-read the static table and apply
     // only the cap, so a saved per-model window showed up in /api/models and was written back
-    // at 922,000 in the Codex catalog.
-    const limits = { providers: { openai: { modelContextWindows: { "gpt-5.6-sol": 500_000 } } } } as never;
-    const entry: Record<string, unknown> = { slug: "gpt-5.6-sol", context_window: 922_000, max_context_window: 922_000 };
+    // at 922,000 in the Codex catalog. Raising below the native max (872k) must preserve the
+    // native max instead of flattening max_context_window to the operating window.
+    const raisedWindow = 500_000;
+    const limits = { providers: { openai: { modelContextWindows: { "gpt-5.6-sol": raisedWindow } } } } as never;
+    const entry: Record<string, unknown> = {
+      slug: "gpt-5.6-sol",
+      context_window: NATIVE_GPT56_MAX_INPUT_TOKENS,
+      max_context_window: NATIVE_GPT56_MAX_INPUT_TOKENS,
+    };
     applyNativeOpenAiContextOverride(entry as never, nativeContextLimits(limits));
-    expect(entry.context_window).toBe(500_000);
-    expect(entry.max_context_window).toBe(500_000);
-    expect(entry.auto_compact_token_limit).toBe(450_000); // 90% of the narrowed window
+    expect(entry.context_window).toBe(raisedWindow);
+    expect(entry.max_context_window).toBe(NATIVE_GPT56_MAX_CONTEXT_WINDOW);
+    expect(entry.auto_compact_token_limit).toBe(Math.floor(raisedWindow * 0.9));
+  });
+
+  test("GPT-5.6 max_context_window follows raises between native max and the measured ceiling", () => {
+    const cases = [
+      { window: NATIVE_GPT56_MAX_CONTEXT_WINDOW, expected: NATIVE_GPT56_MAX_CONTEXT_WINDOW },
+      { window: NATIVE_GPT56_MAX_CONTEXT_WINDOW + 1_000, expected: NATIVE_GPT56_MAX_CONTEXT_WINDOW + 1_000 },
+      { window: NATIVE_GPT56_MAX_INPUT_TOKENS, expected: NATIVE_GPT56_MAX_INPUT_TOKENS },
+      { window: NATIVE_GPT56_MAX_INPUT_TOKENS + 1, expected: NATIVE_GPT56_MAX_INPUT_TOKENS },
+    ];
+    for (const { window, expected } of cases) {
+      const limits = { providers: { openai: { modelContextWindows: { "gpt-5.6-sol": window } } } } as never;
+      const entry: Record<string, unknown> = {
+        slug: "gpt-5.6-sol",
+        context_window: NATIVE_GPT56_CONTEXT_WINDOW,
+        max_context_window: NATIVE_GPT56_CONTEXT_WINDOW,
+      };
+      applyNativeOpenAiContextOverride(entry as never, nativeContextLimits(limits));
+      expect(entry.context_window).toBe(Math.min(window, NATIVE_GPT56_MAX_INPUT_TOKENS));
+      expect(entry.max_context_window).toBe(expected);
+    }
   });
 
   test("the advertised native window stays inside the measured ceiling after Codex spends 95% of it", () => {
@@ -115,7 +146,7 @@ describe("native GPT model toggles (bare slugs in disabledModels)", () => {
     // turn_context.rs). Shipping 1,050,000 here meant a 997,500-token budget against a
     // ceiling measured at 922,000 — the client filled past what the upstream accepts.
     const CODEX_EFFECTIVE_PERCENT = 0.95;
-    const MEASURED_CEILING = 922_000; // 921,508 accepted / 922,013 refused, 2026-08-17
+    const MEASURED_CEILING = NATIVE_GPT56_MAX_INPUT_TOKENS; // 921,508 accepted / 922,013 refused, 2026-08-17
     const rows = nativeModelRows({});
     const gpt56 = rows.filter(row => row.slug.startsWith("gpt-5.6-") || row.slug.includes("daybreak"));
     expect(gpt56.length).toBeGreaterThan(0);
@@ -125,7 +156,7 @@ describe("native GPT model toggles (bare slugs in disabledModels)", () => {
     }
     // And the window is a cap held under the ceiling, not back-solved to sit right on it:
     // 970,000 would pass the check above (921,500) while leaving no room at all.
-    expect(rows.find(row => row.slug === "gpt-5.6-sol")?.contextWindow).toBe(272_000);
+    expect(rows.find(row => row.slug === "gpt-5.6-sol")?.contextWindow).toBe(NATIVE_GPT56_CONTEXT_WINDOW);
   });
 
   test("the native /api/models rows carry the input ceiling, not just the window", async () => {
@@ -133,14 +164,14 @@ describe("native GPT model toggles (bare slugs in disabledModels)", () => {
     // reports only the window tells the dashboard the whole thing is usable as input.
     const rows = nativeModelRows({});
     const sol = rows.find(row => row.slug === "gpt-5.6-sol");
-    expect(sol?.contextWindow).toBe(272_000);
-    expect(sol?.maxInputTokens).toBe(272_000);
+    expect(sol?.contextWindow).toBe(NATIVE_GPT56_CONTEXT_WINDOW);
+    expect(sol?.maxInputTokens).toBe(NATIVE_GPT56_CONTEXT_WINDOW);
     // A cap lowers both numbers together — an input ceiling above the capped window would
     // be nonsense.
-    const capped = nativeModelRows({ providerContextCaps: { openai: 272_000 } });
+    const capped = nativeModelRows({ providerContextCaps: { openai: NATIVE_GPT56_CONTEXT_WINDOW } });
     const cappedSol = capped.find(row => row.slug === "gpt-5.6-sol");
-    expect(cappedSol?.contextWindow).toBe(272_000);
-    expect(cappedSol?.maxInputTokens).toBe(272_000);
+    expect(cappedSol?.contextWindow).toBe(NATIVE_GPT56_CONTEXT_WINDOW);
+    expect(cappedSol?.maxInputTokens).toBe(NATIVE_GPT56_CONTEXT_WINDOW);
     // A native model with no separate ceiling keeps reporting just its window.
     const gpt55 = rows.find(row => row.slug === "gpt-5.5");
     expect(gpt55?.contextWindow).toBe(272_000);
@@ -148,15 +179,15 @@ describe("native GPT model toggles (bare slugs in disabledModels)", () => {
   });
 
   test("the native 1M switch raises the Codex 272k default up to the measured ceiling", () => {
-    const raised = nativeModelRows({ providerContextCaps: { openai: 922_000 } });
+    const raised = nativeModelRows({ providerContextCaps: { openai: NATIVE_GPT56_MAX_INPUT_TOKENS } });
     expect(raised.find(r => r.slug === "gpt-5.6-sol")).toMatchObject({
-      contextWindow: 922_000,
-      maxInputTokens: 922_000,
+      contextWindow: NATIVE_GPT56_MAX_INPUT_TOKENS,
+      maxInputTokens: NATIVE_GPT56_MAX_INPUT_TOKENS,
     });
-    expect(raised.find(r => r.slug === "gpt-5.6-luna")?.contextWindow).toBe(922_000);
+    expect(raised.find(r => r.slug === "gpt-5.6-luna")?.contextWindow).toBe(NATIVE_GPT56_MAX_INPUT_TOKENS);
     // A value above the ceiling clamps; gpt-5.5 cannot be invented wider.
     const over = nativeModelRows({ providerContextCaps: { openai: 2_000_000 } });
-    expect(over.find(r => r.slug === "gpt-5.6-sol")?.contextWindow).toBe(922_000);
+    expect(over.find(r => r.slug === "gpt-5.6-sol")?.contextWindow).toBe(NATIVE_GPT56_MAX_INPUT_TOKENS);
     expect(raised.find(r => r.slug === "gpt-5.5")?.contextWindow).toBe(272_000);
     expect(raised.find(r => r.slug === "gpt-5.4")?.contextWindow).toBe(1_000_000);
   });
@@ -164,15 +195,15 @@ describe("native GPT model toggles (bare slugs in disabledModels)", () => {
   test("nativeModelRows applies providerContextCaps.openai as a ceiling (#1430)", () => {
     const rows = nativeModelRows({
       disabledModels: [],
-      providerContextCaps: { openai: 272_000 },
+      providerContextCaps: { openai: NATIVE_GPT56_CONTEXT_WINDOW },
     });
-    expect(rows.find(r => r.slug === "gpt-5.6-sol")?.contextWindow).toBe(272_000);
-    expect(rows.find(r => r.slug === "gpt-5.6-luna")?.contextWindow).toBe(272_000);
+    expect(rows.find(r => r.slug === "gpt-5.6-sol")?.contextWindow).toBe(NATIVE_GPT56_CONTEXT_WINDOW);
+    expect(rows.find(r => r.slug === "gpt-5.6-luna")?.contextWindow).toBe(NATIVE_GPT56_CONTEXT_WINDOW);
     // gpt-5.5 (272k native) is unchanged by the same cap.
     expect(rows.find(r => r.slug === "gpt-5.5")?.contextWindow).toBe(272_000);
     // A cap for another provider leaves natives untouched.
     const other = nativeModelRows({ providerContextCaps: { "openai-apikey": 128_000 } });
-    expect(other.find(r => r.slug === "gpt-5.6-sol")?.contextWindow).toBe(272_000);
+    expect(other.find(r => r.slug === "gpt-5.6-sol")?.contextWindow).toBe(NATIVE_GPT56_CONTEXT_WINDOW);
   });
 
   test("native aliases suppress their native dashboard row and activate Desktop allowlist pruning", () => {
@@ -398,12 +429,13 @@ describe("native GPT model toggles (bare slugs in disabledModels)", () => {
   });
 
   test("native metadata helpers trust only marked, well-shaped account rows", () => {
+    const fixtureWindow = 128_000;
     const trusted = {
       slug: "side/gpt-5.6-luna",
       opencodex_catalog_kind: CODEX_ACCOUNT_BOUND_CATALOG_KIND,
-      context_window: 128_000,
-      max_context_window: 128_000,
-      auto_compact_token_limit: 115_200,
+      context_window: fixtureWindow,
+      max_context_window: fixtureWindow,
+      auto_compact_token_limit: Math.floor(fixtureWindow * 0.9),
       multi_agent_version: "v2",
     };
     const malformed = {
@@ -420,19 +452,19 @@ describe("native GPT model toggles (bare slugs in disabledModels)", () => {
     applyNativeOpenAiContextOverride(malformed);
     applyNativeOpenAiContextOverride(unmarked);
     expect(trusted).toMatchObject({
-      context_window: 272_000,
-      max_context_window: 272_000,
-      auto_compact_token_limit: 244_800,
+      context_window: NATIVE_GPT56_CONTEXT_WINDOW,
+      max_context_window: NATIVE_GPT56_MAX_CONTEXT_WINDOW,
+      auto_compact_token_limit: Math.floor(NATIVE_GPT56_CONTEXT_WINDOW * 0.9),
     });
     expect(malformed).toMatchObject({
-      context_window: 128_000,
-      max_context_window: 128_000,
-      auto_compact_token_limit: 115_200,
+      context_window: fixtureWindow,
+      max_context_window: fixtureWindow,
+      auto_compact_token_limit: Math.floor(fixtureWindow * 0.9),
     });
     expect(unmarked).toMatchObject({
-      context_window: 128_000,
-      max_context_window: 128_000,
-      auto_compact_token_limit: 115_200,
+      context_window: fixtureWindow,
+      max_context_window: fixtureWindow,
+      auto_compact_token_limit: Math.floor(fixtureWindow * 0.9),
     });
 
     applyMultiAgentMode([trusted, malformed, unmarked], "default");

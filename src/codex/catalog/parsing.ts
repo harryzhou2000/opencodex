@@ -31,7 +31,7 @@ import { redactSecretString } from "../../lib/redact";
 import upstreamModelsSnapshot from "../data/upstream-models.json";
 
 
-import { NATIVE_OPENAI_CONTEXT_OVERRIDES, SUPPORTED_NATIVE_OPENAI_SLUGS, UPSTREAM_NATIVE_ENTRIES, isNativeOpenAiCapabilityAliasModel, nativeMultiAgentVersion, nativeOpenAiContextWindow, nativeOpenAiMaxInputTokens, type NativeContextLimitsInput } from "./metadata";
+import { NATIVE_GPT56_MAX_INPUT_TOKENS, NATIVE_OPENAI_CONTEXT_OVERRIDES, SUPPORTED_NATIVE_OPENAI_SLUGS, UPSTREAM_NATIVE_ENTRIES, isNativeOpenAiCapabilityAliasModel, nativeMultiAgentVersion, nativeOpenAiContextWindow, nativeOpenAiMaxInputTokens, type NativeContextLimitsInput } from "./metadata";
 import { trustedAccountBoundNativeCatalogSlug } from "./account-models";
 import { CODEX_NATIVE_ALIAS_CATALOG_KIND } from "./kinds";
 
@@ -296,10 +296,12 @@ function narrowNativeMaxContextWindow(
   if (typeof value !== "number" || value <= 0) return value;
   const resolved = nativeOpenAiContextWindow(slug, limits);
   const authoritative = nativeOpenAiContextWindow(slug);
-  // The accessor pair tells us how far the levers moved this slug; apply the same delta to a
-  // field the accessor does not model, without ever raising it.
+  // The accessor pair tells us how far the levers moved this slug. Only narrow
+  // the max when the user actually lowered the window; otherwise keep the native
+  // max, which upstream advertises above the operating window (272k vs 872k).
   if (resolved === undefined || authoritative === undefined) return value;
-  return Math.min(value, Math.max(resolved, 1));
+  if (resolved < authoritative) return Math.min(value, Math.max(resolved, 1));
+  return value;
 }
 
 export function applyNativeOpenAiContextOverride(entry: RawEntry, limits?: NativeContextLimitsInput): void {
@@ -321,8 +323,17 @@ export function applyNativeOpenAiContextOverride(entry: RawEntry, limits?: Nativ
       );
     }
     if (typeof override.maxContextWindow === "number") {
-      const maxContextWindow = narrowNativeMaxContextWindow(nativeSlug, override.maxContextWindow, limits);
-      entry.max_context_window = maxContextWindow;
+      const resolvedContext = nativeOpenAiContextWindow(nativeSlug, limits) ?? override.contextWindow;
+      const raised = typeof resolvedContext === "number"
+        && typeof override.contextWindow === "number"
+        && resolvedContext > override.contextWindow;
+      // Default rows advertise the native max (e.g. 872k for GPT-5.6) even though
+      // the operating window is 272k. When the user raises the window, the max
+      // follows the raise, capped at the measured ceiling (922k).
+      const maxContextWindow = raised
+        ? Math.min(Math.max(override.maxContextWindow, resolvedContext), NATIVE_GPT56_MAX_INPUT_TOKENS)
+        : override.maxContextWindow;
+      entry.max_context_window = narrowNativeMaxContextWindow(nativeSlug, maxContextWindow, limits);
     }
   }
   // providerContextCaps.openai is a ceiling for native OpenAI rows regardless of where the

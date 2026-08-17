@@ -2,7 +2,7 @@ import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { applyNativeVisibility, augmentRoutedModelsWithMetadata, augmentRoutedModelsWithRegistryOpenAiApiRows, buildCatalogEntries, buildComboCatalogOmission, catalogModelSlug, clampCatalogModelsToCodexSupport, clampEntryToCodexSupportedEfforts, clampedDefaultEffort, CODEX_ACCOUNT_BOUND_CATALOG_KIND, CODEX_NATIVE_ALIAS_CATALOG_KIND, comboCatalogOmissionReason, deriveComboCatalogModel, exactComboCatalogSlugs, filterCatalogVisibleModels, filterSupportedNativeSlugs, gatherRoutedModels as gatherRoutedModelsDirect, isDatedVariantId, isMediaGenerationModelId, loadBundledCodexCatalog, materializeBundledCodexCatalog, mergeCatalogEntriesForSync, NATIVE_DAYBREAK_BLUE_MODEL, NATIVE_OPENAI_MODELS, nativeDefaultReasoningEffort, nativeInputModalities, nativeOpenAiCapabilitySourceSlug, nativeOpenAiContextWindow, nativeReasoningEfforts, normalizeRoutedCatalogEntry, resetCatalogRuntimeStateForTests, resetOpenAiApiCatalogWarningStateForTests, resolveComboCatalogMember, shouldExposeRoutedModel, upstreamNativeEntry } from "../src/codex/catalog";
+  import { applyNativeVisibility, augmentRoutedModelsWithMetadata, augmentRoutedModelsWithRegistryOpenAiApiRows, buildCatalogEntries, buildComboCatalogOmission, catalogModelSlug, clampCatalogModelsToCodexSupport, clampEntryToCodexSupportedEfforts, clampedDefaultEffort, CODEX_ACCOUNT_BOUND_CATALOG_KIND, CODEX_NATIVE_ALIAS_CATALOG_KIND, comboCatalogOmissionReason, deriveComboCatalogModel, exactComboCatalogSlugs, filterCatalogVisibleModels, filterSupportedNativeSlugs, gatherRoutedModels as gatherRoutedModelsDirect, isDatedVariantId, isMediaGenerationModelId, loadBundledCodexCatalog, materializeBundledCodexCatalog, mergeCatalogEntriesForSync, NATIVE_DAYBREAK_BLUE_MODEL, NATIVE_GPT56_CONTEXT_WINDOW, NATIVE_GPT56_MAX_CONTEXT_WINDOW, NATIVE_GPT56_MAX_INPUT_TOKENS, NATIVE_OPENAI_MODELS, nativeDefaultReasoningEffort, nativeInputModalities, nativeOpenAiCapabilitySourceSlug, nativeOpenAiContextWindow, nativeReasoningEfforts, normalizeRoutedCatalogEntry, resetCatalogRuntimeStateForTests, resetOpenAiApiCatalogWarningStateForTests, resolveComboCatalogMember, shouldExposeRoutedModel, upstreamNativeEntry } from "../src/codex/catalog";
 import {
   CODEX_CUSTOM_MODEL_CATALOG_KIND,
   CODEX_PROVIDER_MODEL_CATALOG_KIND,
@@ -2619,9 +2619,11 @@ describe("Codex catalog routed normalization", () => {
     expect((gpt56?.supported_reasoning_levels as { effort: string }[]).map(l => l.effort)).toEqual([
       "low", "medium", "high", "xhigh", "max", "ultra",
     ]);
-    expect(gpt56?.context_window).toBe(272_000);
-    expect(gpt56?.max_context_window).toBe(272_000);
-    expect(gpt56?.auto_compact_token_limit).toBe(244_800);
+    expect(gpt56?.context_window).toBe(NATIVE_GPT56_CONTEXT_WINDOW);
+    // The default operating window stays 272k, but the advertised max follows the
+    // native/upstream max (872k) instead of being flattened to the window.
+    expect(gpt56?.max_context_window).toBe(NATIVE_GPT56_MAX_CONTEXT_WINDOW);
+    expect(gpt56?.auto_compact_token_limit).toBe(Math.floor(NATIVE_GPT56_CONTEXT_WINDOW * 0.9));
     expect((gpt55?.supported_reasoning_levels as { effort: string }[]).map(l => l.effort)).toEqual([
       "low", "medium", "high", "xhigh", "max", "ultra",
     ]);
@@ -2663,7 +2665,7 @@ describe("Codex catalog routed normalization", () => {
       expect(e).not.toHaveProperty("minimal_client_version");
       expect(e).not.toHaveProperty("prefer_websockets");
       expect(e).not.toHaveProperty("supports_websockets");
-      expect(e?.context_window).toBe(272_000);
+      expect(e?.context_window).toBe(NATIVE_GPT56_CONTEXT_WINDOW);
       expect(e?.tool_mode).toBe("code_mode_only");
       expect(e?.use_responses_lite).toBe(true);
     }
@@ -2677,7 +2679,7 @@ describe("Codex catalog routed normalization", () => {
   });
 
   test("providerContextCaps.openai ceilings native GPT-5.6 catalog rows (#1430)", () => {
-    const cap = 272_000;
+    const cap = NATIVE_GPT56_CONTEXT_WINDOW;
     const entries = buildCatalogEntries(
       nativeTemplate(),
       ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"],
@@ -2694,13 +2696,13 @@ describe("Codex catalog routed normalization", () => {
     for (const slug of ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]) {
       const entry = entries.find(e => e.slug === slug);
       expect(entry?.context_window).toBe(cap);
-      expect(entry?.max_context_window).toBe(cap);
-      expect(entry?.auto_compact_token_limit).toBe(244_800);
+      expect(entry?.max_context_window).toBe(NATIVE_GPT56_MAX_CONTEXT_WINDOW);
+      expect(entry?.auto_compact_token_limit).toBe(Math.floor(cap * 0.9));
     }
   });
 
   test("mergeCatalogEntriesForSync re-applies the openai cap to preserved and upgraded native rows (#1430)", () => {
-    const cap = 272_000;
+    const cap = NATIVE_GPT56_CONTEXT_WINDOW;
     const template = nativeTemplate();
     // A preserved genuine row and a fallback-quality row (display_name stamped with
     // the bare slug) both pass through the final native-override pass on merge.
@@ -2708,9 +2710,9 @@ describe("Codex catalog routed normalization", () => {
       ...template,
       slug: "gpt-5.6-sol",
       display_name: "GPT-5.6-Sol",
-      context_window: 922_000,
-      max_context_window: 922_000,
-      auto_compact_token_limit: 829_800,
+      context_window: NATIVE_GPT56_MAX_INPUT_TOKENS,
+      max_context_window: NATIVE_GPT56_MAX_INPUT_TOKENS,
+      auto_compact_token_limit: Math.floor(NATIVE_GPT56_MAX_INPUT_TOKENS * 0.9),
       supported_reasoning_levels: [
         { effort: "low", description: "l" }, { effort: "high", description: "h" },
         { effort: "max", description: "m" }, { effort: "ultra", description: "u" },
@@ -2737,13 +2739,13 @@ describe("Codex catalog routed normalization", () => {
     );
     const sol = merged.find(e => e.slug === "gpt-5.6-sol");
     expect(sol?.context_window).toBe(cap);
-    expect(sol?.max_context_window).toBe(cap);
-    expect(sol?.auto_compact_token_limit).toBe(244_800);
+    expect(sol?.max_context_window).toBe(NATIVE_GPT56_MAX_CONTEXT_WINDOW);
+    expect(sol?.auto_compact_token_limit).toBe(Math.floor(cap * 0.9));
     // The backfilled luna row (upstream snapshot) is capped the same way.
     const luna = merged.find(e => e.slug === "gpt-5.6-luna");
     expect(luna?.context_window).toBe(cap);
-    expect(luna?.max_context_window).toBe(cap);
-    expect(luna?.auto_compact_token_limit).toBe(244_800);
+    expect(luna?.max_context_window).toBe(NATIVE_GPT56_MAX_CONTEXT_WINDOW);
+    expect(luna?.auto_compact_token_limit).toBe(Math.floor(cap * 0.9));
   });
 
   test("preserved gpt-5.4-mini rows get the openai cap without a hardcoded override (#1430)", () => {
@@ -2785,14 +2787,14 @@ describe("Codex catalog routed normalization", () => {
   });
 
   test("nativeOpenAiContextWindow applies the openai cap as a ceiling only when provided", () => {
-    expect(nativeOpenAiContextWindow("gpt-5.6-sol")).toBe(272_000);
-    expect(nativeOpenAiContextWindow("gpt-5.6-sol", 272_000)).toBe(272_000);
+    expect(nativeOpenAiContextWindow("gpt-5.6-sol")).toBe(NATIVE_GPT56_CONTEXT_WINDOW);
+    expect(nativeOpenAiContextWindow("gpt-5.6-sol", NATIVE_GPT56_CONTEXT_WINDOW)).toBe(NATIVE_GPT56_CONTEXT_WINDOW);
     // A 500k cap raises the 272k default; a 2M cap clamps to the measured 922k ceiling.
     expect(nativeOpenAiContextWindow("gpt-5.6-sol", 500_000)).toBe(500_000);
     // A cap ABOVE the native value is a ceiling, not a floor.
-    expect(nativeOpenAiContextWindow("gpt-5.6-sol", 2_000_000)).toBe(922_000);
+    expect(nativeOpenAiContextWindow("gpt-5.6-sol", 2_000_000)).toBe(NATIVE_GPT56_MAX_INPUT_TOKENS);
     // Non-5.6 natives are capped the same way.
-    expect(nativeOpenAiContextWindow("gpt-5.4", 272_000)).toBe(272_000);
+    expect(nativeOpenAiContextWindow("gpt-5.4", NATIVE_GPT56_CONTEXT_WINDOW)).toBe(NATIVE_GPT56_CONTEXT_WINDOW);
   });
 
   // Owner decision (devlog 260816_.../011 §4-bis): Daybreak Blue is now a GLOBALLY
@@ -2802,7 +2804,7 @@ describe("Codex catalog routed normalization", () => {
   test("Daybreak Blue inherits Sol capabilities and ships one bare row plus one row per selector", () => {
     expect(NATIVE_DAYBREAK_BLUE_MODEL).toBe("gpt-daybreak-blue-latest");
     expect(nativeOpenAiCapabilitySourceSlug(NATIVE_DAYBREAK_BLUE_MODEL)).toBe("gpt-5.6-sol");
-    expect(nativeOpenAiContextWindow(NATIVE_DAYBREAK_BLUE_MODEL)).toBe(272_000);
+    expect(nativeOpenAiContextWindow(NATIVE_DAYBREAK_BLUE_MODEL)).toBe(NATIVE_GPT56_CONTEXT_WINDOW);
     expect(nativeInputModalities(NATIVE_DAYBREAK_BLUE_MODEL)).toEqual(["text", "image"]);
     expect(nativeReasoningEfforts(NATIVE_DAYBREAK_BLUE_MODEL))
       .toEqual(["low", "medium", "high", "xhigh", "max", "ultra"]);
@@ -2912,9 +2914,9 @@ describe("Codex catalog routed normalization", () => {
     expect(daybreak).toMatchObject({
       slug: `openai/${NATIVE_DAYBREAK_BLUE_MODEL}`,
       display_name: "Daybreak Blue",
-      context_window: 922_000,
-      max_context_window: 922_000,
-      auto_compact_token_limit: 829_800,
+      context_window: NATIVE_GPT56_MAX_INPUT_TOKENS,
+      max_context_window: NATIVE_GPT56_MAX_INPUT_TOKENS,
+      auto_compact_token_limit: Math.floor(NATIVE_GPT56_MAX_INPUT_TOKENS * 0.9),
       comp_hash: "3000",
       tool_mode: "code_mode_only",
       use_responses_lite: true,

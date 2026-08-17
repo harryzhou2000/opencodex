@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { NATIVE_GPT56_CONTEXT_WINDOW, NATIVE_GPT56_MAX_CONTEXT_WINDOW, NATIVE_GPT56_MAX_INPUT_TOKENS } from "../src/codex/catalog";
 
 const repoRoot = dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
 
@@ -411,9 +412,9 @@ describe("Codex catalog sync hardening", () => {
 
     const rows = JSON.parse(readFileSync(catalogPath, "utf8")).models as Array<Record<string, unknown>>;
     expect(rows.find(row => row.slug === "team/gpt-daybreak-blue-latest")).toMatchObject({
-      context_window: 272_000,
-      max_context_window: 272_000,
-      auto_compact_token_limit: 244_800,
+      context_window: NATIVE_GPT56_CONTEXT_WINDOW,
+      max_context_window: NATIVE_GPT56_MAX_CONTEXT_WINDOW,
+      auto_compact_token_limit: Math.floor(NATIVE_GPT56_CONTEXT_WINDOW * 0.9),
       comp_hash: "3000",
       tool_mode: "code_mode_only",
       use_responses_lite: true,
@@ -459,9 +460,9 @@ describe("Codex catalog sync hardening", () => {
     const daybreak = rows.find(row => row.slug === "openai/gpt-daybreak-blue-latest");
     expect(daybreak).toMatchObject({
       display_name: "Daybreak Blue",
-      context_window: 922_000,
-      max_context_window: 922_000,
-      auto_compact_token_limit: 829_800,
+      context_window: NATIVE_GPT56_MAX_INPUT_TOKENS,
+      max_context_window: NATIVE_GPT56_MAX_INPUT_TOKENS,
+      auto_compact_token_limit: Math.floor(NATIVE_GPT56_MAX_INPUT_TOKENS * 0.9),
       comp_hash: "3000",
       tool_mode: "code_mode_only",
       use_responses_lite: true,
