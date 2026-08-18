@@ -120,6 +120,23 @@ describe("native GPT model toggles (bare slugs in disabledModels)", () => {
     expect(entry.auto_compact_token_limit).toBe(Math.floor(raisedWindow * 0.9));
   });
 
+  test("a provider cap clamps a raised window and its advertised max independently", () => {
+    const raisedWindow = 500_000;
+    const cap = 350_000;
+    const limits = {
+      providers: { openai: { modelContextWindows: { "gpt-5.6-sol": raisedWindow } } },
+      providerContextCaps: { openai: cap },
+    } as never;
+    const entry: Record<string, unknown> = {
+      slug: "gpt-5.6-sol",
+      context_window: NATIVE_GPT56_MAX_INPUT_TOKENS,
+      max_context_window: NATIVE_GPT56_MAX_INPUT_TOKENS,
+    };
+    applyNativeOpenAiContextOverride(entry as never, nativeContextLimits(limits));
+    expect(entry.context_window).toBe(cap);
+    expect(entry.max_context_window).toBe(cap);
+  });
+
   test("GPT-5.6 max_context_window follows raises between native max and the measured ceiling", () => {
     const cases = [
       { window: NATIVE_GPT56_MAX_CONTEXT_WINDOW, expected: NATIVE_GPT56_MAX_CONTEXT_WINDOW },

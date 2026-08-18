@@ -300,8 +300,12 @@ function narrowNativeMaxContextWindow(
   // the max when the user actually lowered the window; otherwise keep the native
   // max, which upstream advertises above the operating window (272k vs 872k).
   if (resolved === undefined || authoritative === undefined) return value;
-  if (resolved < authoritative) return Math.min(value, Math.max(resolved, 1));
-  return value;
+  // A configured provider cap independently clamps the advertised maximum, even
+  // when the resolved operating window was raised above the authoritative window.
+  const cap = typeof limits === "number" ? limits : limits?.cap;
+  const capped = applyProviderContextCap(value, cap) ?? value;
+  if (resolved < authoritative) return Math.min(capped, Math.max(resolved, 1));
+  return capped;
 }
 
 export function applyNativeOpenAiContextOverride(entry: RawEntry, limits?: NativeContextLimitsInput): void {
