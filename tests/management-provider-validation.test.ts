@@ -13,7 +13,7 @@ import {
   getCodexUpstreamHealth,
   recordCodexUpstreamOutcome,
 } from "../src/codex/routing";
-import { loadConfig, saveConfig } from "../src/config";
+import { getConfigPath, loadConfig, saveConfig } from "../src/config";
 import { deriveProviderPresets } from "../src/providers/derive";
 import { MAIN_CODEX_ACCOUNT_ID } from "../src/codex/main-account";
 import {
@@ -390,7 +390,104 @@ describe("provider management validation", () => {
         }),
       });
       expect(create.status).toBe(200);
-      expect(loadConfig().providers.relay).not.toHaveProperty("annotateEmptyToolOutputs");
+      const persisted = loadConfig();
+      expect(persisted.providers.relay).toBeDefined();
+      expect(persisted.providers.relay).not.toHaveProperty("annotateEmptyToolOutputs");
+      const onDisk = JSON.parse(readFileSync(getConfigPath(), "utf8")) as OcxConfig;
+      expect(onDisk.providers.relay).toBeDefined();
+      expect(onDisk.providers.relay).not.toHaveProperty("annotateEmptyToolOutputs");
+    } finally {
+      await server.stop(true);
+    }
+  });
+
+  test("provider POST null clears an existing explicit annotateEmptyToolOutputs override", async () => {
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+    mkdirSync(TEST_DIR, { recursive: true });
+    process.env.OPENCODEX_HOME = TEST_DIR;
+    saveConfig(config("127.0.0.1"));
+
+    const server = startServer(0);
+    try {
+      const create = await fetch(new URL("/api/providers", server.url), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: "relay",
+          provider: {
+            adapter: "openai-chat",
+            baseUrl: "https://relay.example/v1",
+            annotateEmptyToolOutputs: true,
+          },
+        }),
+      });
+      expect(create.status).toBe(200);
+      expect(loadConfig().providers.relay?.annotateEmptyToolOutputs).toBe(true);
+
+      // null means "clear the override", not "leave it untouched".
+      const overwrite = await fetch(new URL("/api/providers", server.url), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: "relay",
+          provider: {
+            adapter: "openai-chat",
+            baseUrl: "https://relay.example/v1",
+            annotateEmptyToolOutputs: null,
+          },
+        }),
+      });
+      expect(overwrite.status).toBe(200);
+      const persisted = loadConfig();
+      expect(persisted.providers.relay).toBeDefined();
+      expect(persisted.providers.relay).not.toHaveProperty("annotateEmptyToolOutputs");
+      const onDisk = JSON.parse(readFileSync(getConfigPath(), "utf8")) as OcxConfig;
+      expect(onDisk.providers.relay).not.toHaveProperty("annotateEmptyToolOutputs");
+    } finally {
+      await server.stop(true);
+    }
+  });
+
+  test("provider POST null on DeepSeek restores the registry default after enrichment", async () => {
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+    mkdirSync(TEST_DIR, { recursive: true });
+    process.env.OPENCODEX_HOME = TEST_DIR;
+    saveConfig(config("127.0.0.1"));
+
+    const server = startServer(0);
+    try {
+      const create = await fetch(new URL("/api/providers", server.url), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: "deepseek",
+          provider: {
+            adapter: "openai-chat",
+            baseUrl: "https://api.deepseek.com",
+            apiKey: "sk-test",
+            annotateEmptyToolOutputs: false,
+          },
+        }),
+      });
+      expect(create.status).toBe(200);
+      expect(loadConfig().providers.deepseek?.annotateEmptyToolOutputs).toBe(false);
+
+      // Clearing the opt-out must let registry enrichment re-enable annotation.
+      const overwrite = await fetch(new URL("/api/providers", server.url), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: "deepseek",
+          provider: {
+            adapter: "openai-chat",
+            baseUrl: "https://api.deepseek.com",
+            apiKey: "sk-test",
+            annotateEmptyToolOutputs: null,
+          },
+        }),
+      });
+      expect(overwrite.status).toBe(200);
+      expect(loadConfig().providers.deepseek?.annotateEmptyToolOutputs).toBe(true);
     } finally {
       await server.stop(true);
     }

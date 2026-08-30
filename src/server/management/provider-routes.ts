@@ -557,6 +557,14 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
     let body: { name?: unknown; provider?: unknown; setDefault?: boolean };
     try { body = await readManagementJsonBody(req); } catch (error) { rethrowManagementBodyTooLarge(error); return jsonResponse({ error: "invalid JSON body" }, 400); }
     const name = typeof body.name === "string" ? body.name.trim() : "";
+    // Capture field presence BEFORE null canonicalization: a submitted null is an
+    // explicit "clear" and must not be mistaken for an omitted field, otherwise the
+    // carry-over guard below restores the existing override instead of clearing it.
+    const submittedAnnotateEmptyToolOutputs =
+      body.provider !== null
+      && typeof body.provider === "object"
+      && !Array.isArray(body.provider)
+      && Object.hasOwn(body.provider as Record<string, unknown>, "annotateEmptyToolOutputs");
     // Canonicalize a POST null exactly like PATCH's "clear" before validation: the
     // dashboard's form clears the opt-out with null, and rejecting it here would
     // force a two-step edit for something PATCH already accepts as a delete.
@@ -609,7 +617,6 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
     const submittedModelContextWindows = Object.hasOwn(prov, "modelContextWindows");
     const submittedModelAutoCompactTokenLimits = Object.hasOwn(prov, "modelAutoCompactTokenLimits");
     const submittedRequestPacing = Object.hasOwn(prov, "requestPacing");
-    const submittedAnnotateEmptyToolOutputs = Object.hasOwn(prov, "annotateEmptyToolOutputs");
     enrichProviderFromCatalog(name, prov);
     const { saveConfigPreservingClaudeCode: save } = await import("../../config");
     // Overwriting an existing provider must not drop its multi-key pool: carry it over, then
