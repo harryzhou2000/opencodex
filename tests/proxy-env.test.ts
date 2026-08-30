@@ -82,6 +82,13 @@ describe("applyProxyEnv with values the schema does not constrain", () => {
     expect(process.env.HTTPS_PROXY).toBeUndefined();
   });
 
+  test("a whitespace-padded environment reference still resolves before assignment", () => {
+    process.env.OCX_TEST_PROXY_REF = "http://proxy.corp:8080";
+    applyProxyEnv(configWithRawProxy("  ${OCX_TEST_PROXY_REF}  "));
+    expect(process.env.HTTP_PROXY).toBe("http://proxy.corp:8080");
+    expect(process.env.HTTPS_PROXY).toBe("http://proxy.corp:8080");
+  });
+
   test("a non-string noProxy does not throw and keeps loopback exclusions", () => {
     expect(() => applyProxyEnv(configWithRawProxy("http://proxy.corp:8080", 42))).not.toThrow();
     expect(process.env.NO_PROXY).toBe("localhost,127.0.0.1,::1,[::1]");

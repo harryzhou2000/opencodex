@@ -369,6 +369,33 @@ describe("provider management validation", () => {
     }
   });
 
+  test("provider POST canonicalizes annotateEmptyToolOutputs null to an omitted field", async () => {
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+    mkdirSync(TEST_DIR, { recursive: true });
+    process.env.OPENCODEX_HOME = TEST_DIR;
+    saveConfig(config("127.0.0.1"));
+
+    const server = startServer(0);
+    try {
+      const create = await fetch(new URL("/api/providers", server.url), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: "relay",
+          provider: {
+            adapter: "openai-chat",
+            baseUrl: "https://relay.example/v1",
+            annotateEmptyToolOutputs: null,
+          },
+        }),
+      });
+      expect(create.status).toBe(200);
+      expect(loadConfig().providers.relay).not.toHaveProperty("annotateEmptyToolOutputs");
+    } finally {
+      await server.stop(true);
+    }
+  });
+
   test("provider PATCH sets, clears, and rejects annotateEmptyToolOutputs", async () => {
     if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
     mkdirSync(TEST_DIR, { recursive: true });

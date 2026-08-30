@@ -3162,7 +3162,10 @@ export function applyProxyEnv(config: OcxConfig): void {
   // malformed values with a privacy-safe warning instead: they cannot express a routing
   // intent, and refusing to start is a worse answer than starting without them.
   const rawProxy = config.proxy;
-  const proxy = typeof rawProxy === "string" ? resolveEnvValue(rawProxy)?.trim() : undefined;
+  // Trim before resolution so a whitespace-padded environment reference (e.g.
+  // "  ${VAR}  ") still resolves, then trim the resolved value so a whitespace-only
+  // env value falls back to direct egress instead of leaking into HTTP(S)_PROXY.
+  const proxy = typeof rawProxy === "string" ? resolveEnvValue(rawProxy.trim())?.trim() : undefined;
   if (!proxy) {
     if (rawProxy !== undefined) warnProxyConfigDiscardOnce("proxy");
     return;

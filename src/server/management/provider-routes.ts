@@ -557,6 +557,15 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
     let body: { name?: unknown; provider?: unknown; setDefault?: boolean };
     try { body = await readManagementJsonBody(req); } catch (error) { rethrowManagementBodyTooLarge(error); return jsonResponse({ error: "invalid JSON body" }, 400); }
     const name = typeof body.name === "string" ? body.name.trim() : "";
+    // Canonicalize a POST null exactly like PATCH's "clear" before validation: the
+    // dashboard's form clears the opt-out with null, and rejecting it here would
+    // force a two-step edit for something PATCH already accepts as a delete.
+    if (body.provider && typeof body.provider === "object" && !Array.isArray(body.provider)) {
+      const providerPayload = body.provider as Record<string, unknown>;
+      if (Object.hasOwn(providerPayload, "annotateEmptyToolOutputs") && providerPayload.annotateEmptyToolOutputs === null) {
+        delete providerPayload.annotateEmptyToolOutputs;
+      }
+    }
     const providerError = providerManagementConfigError(name, body.provider)
       ?? providerEmptyToolOutputConfigError(name, body.provider);
     if (providerError) return jsonResponse({ error: providerError }, 400);
