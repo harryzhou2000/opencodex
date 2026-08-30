@@ -6029,3 +6029,11 @@ describe("Codex 0.151 catalog contract fields", () => {
     });
   });
 });
+
+describe("ollama cloud fallback catalog", () => {
+  test("no longer exposes the retired qwen3-coder:480b", () => {
+    const ollama = PROVIDER_REGISTRY.find(e => e.id === "ollama-cloud");
+    expect(ollama).toBeDefined();
+    expect(ollama!.models).not.toContain("qwen3-coder:480b");
+  });
+});

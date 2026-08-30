@@ -74,6 +74,14 @@ describe("applyProxyEnv with values the schema does not constrain", () => {
     expect(process.env.HTTPS_PROXY).toBeUndefined();
   });
 
+  // The discard warning is once-per-process and an earlier test already consumes it, so
+  // assert the observable contract only: whitespace must not leak into the proxy env vars.
+  test("a whitespace-only proxy is discarded and keeps direct egress", () => {
+    applyProxyEnv(configWithRawProxy("   "));
+    expect(process.env.HTTP_PROXY).toBeUndefined();
+    expect(process.env.HTTPS_PROXY).toBeUndefined();
+  });
+
   test("a non-string noProxy does not throw and keeps loopback exclusions", () => {
     expect(() => applyProxyEnv(configWithRawProxy("http://proxy.corp:8080", 42))).not.toThrow();
     expect(process.env.NO_PROXY).toBe("localhost,127.0.0.1,::1,[::1]");
