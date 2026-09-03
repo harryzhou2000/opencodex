@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { Database } from "bun:sqlite";
 import { SPAWN_BUDGET_MS } from "../helpers/test-budget";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
 
@@ -121,6 +122,13 @@ describe("ocx provider", () => {
       expect(config.providers.deepseek).toBeDefined();
       expect(config.providers.deepseek.adapter).toBe("openai-chat");
       expect(config.providers.deepseek.apiKey).toBe("sk-test");
+      const db = new Database(join(dir, "config-mutation.sqlite"), { readonly: true });
+      try {
+        const row = db.query("SELECT detail FROM config_mutation_audit ORDER BY id DESC LIMIT 1").get() as { detail: string } | null;
+        expect(row?.detail).toBe("ocx provider add");
+      } finally {
+        db.close();
+      }
     } finally {
       removeTreeWithRetry(dir);
     }

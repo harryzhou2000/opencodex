@@ -97,7 +97,7 @@ const commandRunners: Record<string, CommandRunner> = {
       if (!live) {
         return emitBack(false, "No running proxy found. Run 'ocx start' — it injects opencodex automatically.", 1);
       }
-      const desired = setIntegrationEnabled("codex", true);
+      const desired = setIntegrationEnabled("codex", true, { surface: "cli", detail: "ocx restore back" });
       if (!desired.ok) {
         return emitBack(false, `Codex desired state was not saved (${desired.reason}).`, desired.reason === "conflict" ? 2 : 1);
       }
@@ -111,7 +111,7 @@ const commandRunners: Record<string, CommandRunner> = {
       const target = collectOrcaCodexHomeDiagnostic();
       return emitBack(true, `Plain \`codex\` now routes through opencodex in ${target.effectiveCodexHome} (undo with: ocx restore).`, 0);
     }
-    const desired = setIntegrationEnabled("codex", false);
+    const desired = setIntegrationEnabled("codex", false, { surface: "cli", detail: "ocx restore" });
     if (!desired.ok) {
       if (restoreJson) {
         // Machine-readable contract: every restore --json outcome emits one
