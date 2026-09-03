@@ -3796,6 +3796,34 @@ describe("Codex catalog routed normalization", () => {
     }
   });
 
+  test("gatherRoutedModels resolves a bare auto-review target to a retain-only model", async () => {
+    resetCatalogRuntimeStateForTests();
+    try {
+      const base = {
+        port: 10100,
+        defaultProvider: "openai",
+        providers: {
+          openai: {
+            adapter: "openai-responses",
+            baseUrl: "https://example.invalid/v1",
+            authMode: "key",
+            liveModels: false,
+            models: ["worker"],
+            retainModels: ["reviewer"],
+            autoReviewModelOverrides: { worker: "reviewer" },
+          },
+        },
+      } as Parameters<typeof gatherRoutedModelsDirect>[0];
+      const models = await gatherRoutedModelsDirect(base);
+      const reviewer = models.find(model => model.provider === "openai" && model.id === "reviewer");
+      expect(reviewer).toBeDefined();
+      const worker = models.find(model => model.provider === "openai" && model.id === "worker");
+      expect(worker?.autoReviewModelOverride).toBe("openai/reviewer");
+    } finally {
+      resetCatalogRuntimeStateForTests();
+    }
+  });
+
   test("Daybreak metadata inheritance rejects noncanonical providers", async () => {
     const models = await gatherRoutedModels({
       port: 10100,

@@ -1514,11 +1514,16 @@ function clearAutoReviewModelOverride(
   for (const entry of models) {
     if (!entry || typeof entry !== "object") continue;
     const current = entry.auto_review_model_override;
+    const rootMarker = entry.opencodex_auto_review_root;
+    const staleRootCopy = typeof rootMarker === "string"
+      && typeof current === "string"
+      && current === rootMarker;
+    if (rootMarker !== undefined) delete entry.opencodex_auto_review_root;
     if (isRoutedCatalogEntry(entry)) {
       // A freshly derived provider stamp (nonblank valid string) is kept when
       // retaining is requested; everything else on routed rows is cleared so
       // stale root-selector residue cannot persist across regenerations.
-      if (retainRoutedOverrides && typeof current === "string" && isValidAutoReviewModel(current)) continue;
+      if (retainRoutedOverrides && typeof current === "string" && isValidAutoReviewModel(current) && !staleRootCopy) continue;
       entry.auto_review_model_override = null;
       continue;
     }
@@ -1527,7 +1532,7 @@ function clearAutoReviewModelOverride(
         && current === previousRootSelector;
       const matchesHeuristic = previousRootSelector === null
         && globalStamp && configuredValues.has(current);
-      if (matchesPreviousRoot || matchesHeuristic) entry.auto_review_model_override = null;
+      if (staleRootCopy || matchesPreviousRoot || matchesHeuristic) entry.auto_review_model_override = null;
     }
   }
 }
@@ -1549,17 +1554,20 @@ function preserveNativeAutoReviewModelOverrides(
   models: readonly RawEntry[],
   sourceModels: readonly RawEntry[],
 ): void {
-  const existing = new Map<string, string | null>();
+  const existing = new Map<string, { value: string | null; rootMarker: unknown }>();
   for (const entry of sourceModels) {
     const slug = typeof entry.slug === "string" ? entry.slug : undefined;
     const value = entry.auto_review_model_override;
     if (!slug || isRoutedCatalogEntry(entry)) continue;
-    if (typeof value === "string" || value === null) existing.set(slug, value);
+    if (typeof value === "string" || value === null) existing.set(slug, { value, rootMarker: entry.opencodex_auto_review_root });
   }
   for (const entry of models) {
     const slug = typeof entry.slug === "string" ? entry.slug : undefined;
     if (!slug || isRoutedCatalogEntry(entry) || !existing.has(slug)) continue;
-    entry.auto_review_model_override = existing.get(slug) ?? null;
+    const saved = existing.get(slug)!;
+    entry.auto_review_model_override = saved.value ?? null;
+    if (saved.rootMarker !== undefined) entry.opencodex_auto_review_root = saved.rootMarker;
+    else delete entry.opencodex_auto_review_root;
   }
 }
 
@@ -1588,12 +1596,17 @@ export function applyAutoReviewModelOverride(
     warnAutoReviewModelDiagnostic("invalid", trimmed);
     return "invalid";
   }
-  if (!configuredCatalogEntry(models, trimmed)) {
+  const matchedConfigured = configuredCatalogEntry(models, trimmed);
+  if (!matchedConfigured) {
     clearAutoReviewModelOverride(models, sourceModels, retainRouted, lastAppliedRootAutoReviewModel);
     lastAppliedRootAutoReviewModel = null;
     warnAutoReviewModelDiagnostic("unresolved", trimmed);
     return "unresolved";
   }
+  // Stamp the matched catalog row’s actual slug: final validation compares exact slugs, so a
+  // case-equivalent or otherwise equivalent selector must not be written in raw form only to
+  // be dropped by validateAutoReviewOverridesAgainstCatalog.
+  const canonicalRoot = typeof matchedConfigured.slug === "string" ? matchedConfigured.slug : trimmed;
   for (const entry of models) {
     if (!entry || typeof entry !== "object") continue;
     // Provider-level per-row stamps win for their routed rows; the root selector
@@ -1602,9 +1615,10 @@ export function applyAutoReviewModelOverride(
       const current = entry.auto_review_model_override;
       if (typeof current === "string" && isValidAutoReviewModel(current)) continue;
     }
-    entry.auto_review_model_override = trimmed;
+    entry.auto_review_model_override = canonicalRoot;
+    entry.opencodex_auto_review_root = canonicalRoot;
   }
-  lastAppliedRootAutoReviewModel = trimmed;
+  lastAppliedRootAutoReviewModel = canonicalRoot;
   return "applied";
 }
 

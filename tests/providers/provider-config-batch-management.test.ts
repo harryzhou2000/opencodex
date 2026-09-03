@@ -391,4 +391,34 @@ describe("atomic provider editor batch", () => {
       error: "Full config PUT is disabled. Use /api/providers POST for provider changes.",
     });
   });
+
+  test("provider POST does not overwrite auto-review values changed during DNS validation", async () => {
+    const liveConfig = seededConfig();
+    liveConfig.providers.alpha.autoReviewModel = "old-reviewer";
+    saveConfig(liveConfig);
+
+    const destinationSpy = spyOn(destinationPolicy, "providerDestinationResolvedError").mockImplementation(async () => {
+      liveConfig.providers.alpha.autoReviewModel = "concurrent-reviewer";
+      return null;
+    });
+    let response: Response | null;
+    try {
+      const request = new Request("http://127.0.0.1/api/providers", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: "alpha",
+          provider: { adapter: "openai-chat", baseUrl: "https://alpha.example.test/v1", defaultModel: "alpha-old" },
+        }),
+      });
+      response = await handleManagementAPI(request, new URL(request.url), liveConfig, {
+        createManagementConvergeCodex: catalogConvergenceFactory(() => {}),
+      });
+    } finally {
+      destinationSpy.mockRestore();
+    }
+    expect(response?.status).toBe(200);
+    expect(liveConfig.providers.alpha.autoReviewModel).toBe("concurrent-reviewer");
+    expect(loadConfig().providers.alpha.autoReviewModel).toBe("concurrent-reviewer");
+  });
 });

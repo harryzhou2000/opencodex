@@ -431,7 +431,19 @@ function captureProviderGather(
   enrichProviderFromRegistry(name, enriched);
   const registryTransportMatch = providerMatchesRegistryTransport(name, enriched);
   const provider = recursivelyFreeze(enriched);
-  const knownModelIds = Object.freeze([...new Set(provider.models ?? [])]);
+  // Mirror the exact static seed used later by fetchProviderModelsWithAuth: the
+  // Vertex default and retainModels participate in catalog emission even when they are
+  // absent from provider.models, so membership for bare auto-review targets must
+  // include them too (a retain-only model cannot otherwise be named as an approver).
+  const seedVertexDefault = provider.adapter === "google"
+    && provider.googleMode === "vertex"
+    && (provider.models?.length ?? 0) === 0
+    && Boolean(provider.defaultModel);
+  const knownModelIds = Object.freeze([...new Set([
+    ...(seedVertexDefault && provider.defaultModel ? [provider.defaultModel] : []),
+    ...(provider.models ?? []),
+    ...(provider.retainModels ?? []),
+  ])]);
   const fastPolicyAuthority = captureFastPolicyAuthority(
     name,
     provider,

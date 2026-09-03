@@ -481,4 +481,47 @@ describe("global auto_review_model precedence (provider stamp vs root selector)"
       resetCatalogRuntimeStateForTests();
     }
   });
+
+  test("durable root marker clears stale native copies after a restart-like regenerate", () => {
+    resetCatalogRuntimeStateForTests();
+    try {
+      // Rows as they would exist on disk after a previous root stamp and a process restart:
+      // only the per-row marker (not the module variable) identifies the stale native copy.
+      const entries: Array<Record<string, unknown>> = [
+        {
+          slug: "gpt-5.5",
+          auto_review_model_override: "opencode-go/deepseek-v4-pro",
+          opencodex_auto_review_root: "opencode-go/deepseek-v4-pro",
+        },
+        { slug: "opencode-go/deepseek-v4-pro", auto_review_model_override: null },
+        { slug: "deepseek/deepseek-v4-flash", auto_review_model_override: "deepseek/deepseek-v4-flash" },
+        { slug: "blsc/glm-5.2", auto_review_model_override: "blsc/glm-5.2" },
+      ];
+      const removed = applyAutoReviewModelOverride(entries, null, [], { retainRoutedOverrides: true });
+      expect(removed).toBe("absent");
+      expect(entries[0].auto_review_model_override).toBeNull();
+      expect(entries[0].opencodex_auto_review_root).toBeUndefined();
+      expect(entries[2].auto_review_model_override).toBe("deepseek/deepseek-v4-flash");
+      expect(entries[3].auto_review_model_override).toBe("blsc/glm-5.2");
+    } finally {
+      resetCatalogRuntimeStateForTests();
+    }
+  });
+
+  test("raw-vs-encoded equivalent root selector is stamped with the matched catalog slug and survives final validation", () => {
+    resetCatalogRuntimeStateForTests();
+    try {
+      const entries: Array<Record<string, unknown>> = [
+        { slug: "gpt-5.5", auto_review_model_override: null },
+        { slug: "opencode-go/deepseek-v4-pro", auto_review_model_override: null },
+      ];
+      const applied = applyAutoReviewModelOverride(entries, "opencode-go/deepseek/v4-pro", [], { retainRoutedOverrides: true });
+      expect(applied).toBe("applied");
+      expect(entries[0].auto_review_model_override).toBe("opencode-go/deepseek-v4-pro");
+      validateAutoReviewOverridesAgainstCatalog(entries);
+      expect(entries[0].auto_review_model_override).toBe("opencode-go/deepseek-v4-pro");
+    } finally {
+      resetCatalogRuntimeStateForTests();
+    }
+  });
 });

@@ -1063,11 +1063,11 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
     restorePersistedAliasOverlays(prov, config.providers[name]);
     // The GUI form cannot send the auto-review overrides, so an unrelated resave
     // must not erase hand-configured values; clearing goes through PATCH with null.
-    if (!submittedAutoReviewModel && existing?.autoReviewModel !== undefined) {
-      prov.autoReviewModel = existing.autoReviewModel;
+    if (!submittedAutoReviewModel && config.providers[name]?.autoReviewModel !== undefined) {
+      prov.autoReviewModel = config.providers[name]!.autoReviewModel;
     }
-    if (!submittedAutoReviewModelOverrides && existing?.autoReviewModelOverrides !== undefined) {
-      prov.autoReviewModelOverrides = { ...existing.autoReviewModelOverrides };
+    if (!submittedAutoReviewModelOverrides && config.providers[name]?.autoReviewModelOverrides !== undefined) {
+      prov.autoReviewModelOverrides = { ...config.providers[name]!.autoReviewModelOverrides };
     }
     // POST passed boundary validation above; trim the submitted values so the persisted
     // config.json holds canonical ids (same normalizer as PATCH).
