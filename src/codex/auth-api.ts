@@ -1920,7 +1920,10 @@ export async function handleCodexAuthAPI(
     if (!isValidCodexAccountId(id) && !isLegacyPoolAccount) {
       return jsonResponse({ error: "Invalid account id format" }, 400);
     }
-    const pickerVisibilityChanged = deleteCodexAccount(runtimeConfig, id);
+    const pickerVisibilityChanged = deleteCodexAccount(runtimeConfig, id, {
+      surface: "api",
+      detail: "DELETE /api/codex-auth/accounts",
+    });
     saveRuntimeConfig(config, runtimeConfig, { surface: "api", detail: "DELETE /api/codex-auth/accounts" });
     reconcileLiveStateStores();
     const catalogRefresh = await convergeAccountNamespaceCatalog(

@@ -857,7 +857,7 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
           removedProviders: candidate.removedProviders,
         },
       };
-    });
+    }, { surface: "api", detail: "PUT /api/providers" });
     if (outcome.status === "unavailable") {
       const code = outcome.reason === "conflict" ? "provider_config_conflict" : "provider_config_unavailable";
       return jsonResponse({ error: "provider config changed before it could be saved", code }, 409);

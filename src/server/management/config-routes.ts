@@ -282,8 +282,13 @@ export async function handleConfigRoutes(ctx: ManagementContext): Promise<Respon
         config,
       );
     }
-    const requested = Number(url.searchParams.get("limit") ?? "");
-    const { rows, maxRows } = readConfigMutationAudit(Number.isFinite(requested) ? requested : 100);
+    // The documented default is 100. A missing or blank limit must not collapse to
+    // Number("") === 0 (which would silently return an empty trail); non-positive or
+    // unparseable values also fall back to the default.
+    const rawLimit = url.searchParams.get("limit");
+    const requested = rawLimit === null || rawLimit.trim() === "" ? 100 : Number(rawLimit);
+    const effectiveLimit = Number.isInteger(requested) && requested > 0 ? requested : 100;
+    const { rows, maxRows } = readConfigMutationAudit(effectiveLimit);
     return jsonResponse({ mutations: rows, retention: { maxRows } });
   }
 

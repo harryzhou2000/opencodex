@@ -1084,6 +1084,9 @@ describe("config mutation audit management API", () => {
     expect(admin?.status).toBe(200);
   });
 
+  // The route's best-effort agent-def sync performs a real provider model discovery after
+  // the audited save. Under parallel workers that network probe can exceed the default
+  // 5s test budget even though the audit row is written before the sync starts.
   test("PUT /api/claude-code records api surface and route detail", async () => {
     saveConfig(configWithProvider(), { surface: "cli", detail: "ocx first" });
     const url = new URL("http://127.0.0.1:10100/api/claude-code");
@@ -1103,7 +1106,7 @@ describe("config mutation audit management API", () => {
     expect(rows[0].surface).toBe("api");
     expect(rows[0].detail).toBe("PUT /api/claude-code");
     expect(rows[0].fields).toContain("claudeCode");
-  });
+  }, 20_000);
 
   test("admission-key writes record api surface and route detail", async () => {
     saveConfig(configWithProvider(), { surface: "cli", detail: "ocx first" });
@@ -1306,5 +1309,54 @@ describe("config mutation audit attribution sweep", () => {
     rows = readConfigMutationAudit().rows;
     expect(rows[0].surface).toBe("cli");
     expect(rows[0].detail).toBe("ocx disconnect: clear client connection");
+  });
+
+  test("GET /api/config/mutations defaults missing, blank, non-positive, or unparseable limits to 100", async () => {
+    saveConfig(configWithProvider(), { surface: "api", detail: "PUT /api/audit-seed" });
+    const config = loadConfig();
+    for (const suffix of ["", "?limit=", "?limit=0", "?limit=-1", "?limit=abc", "?limit=1.5"]) {
+      const url = new URL(`http://127.0.0.1:10100/api/config/mutations${suffix}`);
+      const response = await handleManagementAPI(
+        new Request(url, { headers: { Host: "127.0.0.1:10100" } }),
+        url,
+        config,
+        {},
+        "admin-token",
+      );
+      expect(response?.status).toBe(200);
+      const body = await response!.json() as { mutations: Array<{ detail?: string }> };
+      expect(body.mutations.length).toBeGreaterThan(0);
+      expect(body.mutations[0]?.detail).toBe("PUT /api/audit-seed");
+    }
+    const limited = new URL("http://127.0.0.1:10100/api/config/mutations?limit=1");
+    const limitedResponse = await handleManagementAPI(
+      new Request(limited, { headers: { Host: "127.0.0.1:10100" } }),
+      limited,
+      config,
+      {},
+      "admin-token",
+    );
+    const limitedBody = await limitedResponse!.json() as { mutations: unknown[] };
+    expect(limitedBody.mutations).toHaveLength(1);
+  });
+
+  test("DELETE /api/codex-auth/accounts records the API source in the audit", async () => {
+    const live = configWithProvider();
+    live.codexAccounts = [{ id: "audit-delete", email: "audit-delete@example.test", isMain: false }];
+    saveConfig(live, { surface: "internal", detail: "test: seed account" });
+    saveCodexAccountCredential("audit-delete", {
+      accessToken: "access-delete-audit",
+      refreshToken: "refresh-delete-audit",
+      expiresAt: Date.now() + 5 * 60_000,
+      chatgptAccountId: "acct-delete-audit",
+    });
+    const config = loadConfig();
+    const req = new Request("http://localhost/api/codex-auth/accounts?id=audit-delete", { method: "DELETE" });
+    const resp = await handleCodexAuthAPI(req, new URL(req.url), config);
+    expect(resp?.status).toBe(200);
+    expect(config.codexAccounts).toEqual([]);
+    const { rows } = readConfigMutationAudit();
+    expect(rows[0]).toMatchObject({ surface: "api", detail: "DELETE /api/codex-auth/accounts" });
+    expect(JSON.stringify(rows[0].fields)).not.toContain("access-delete-audit");
   });
 });
