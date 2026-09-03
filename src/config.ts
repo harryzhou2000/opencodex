@@ -2966,6 +2966,8 @@ let pendingConfigMutationAuditCleanup: string | null = null;
 let failConfigAtomicWriteForTests: (() => Error) | null = null;
 /** Test-only seam: fail the config.json atomic write AFTER the rename lands, before the audit commit. */
 let failAfterConfigAtomicWriteForTests: (() => Error) | null = null;
+/** Test-only seam: make recovery marker deletion fail after the recovery transaction commits. */
+let failRecoveryMarkerUnlinkForTests: (() => Error) | null = null;
 
 /**
  * Test-only one-shot seam: make the next changed config.json persist throw after
@@ -2983,6 +2985,16 @@ export function setConfigAtomicWriteFailureForTests(factory: (() => Error) | nul
  */
 export function setConfigPostWriteFailureForTests(factory: (() => Error) | null): void {
   failAfterConfigAtomicWriteForTests = factory;
+}
+
+/**
+ * Test-only one-shot seam: make the next recovery-marker deletion throw AFTER
+ * the recovery transaction commits. Mirrors a transient handle hold on the
+ * marker path; the committed audit row must survive and the leftover marker
+ * must be re-decided on the next recovery without failing the save.
+ */
+export function setConfigRecoveryMarkerUnlinkFailureForTests(factory: (() => Error) | null): void {
+  failRecoveryMarkerUnlinkForTests = factory;
 }
 
 /**
@@ -3028,6 +3040,11 @@ export function withConfigMutationLockSync<T>(fn: () => T): T {
       // and a parseable-but-invalid one cannot be trusted, so it is removed too.
       for (const markerPath of pendingPaths) {
         try {
+          const failure = failRecoveryMarkerUnlinkForTests;
+          if (failure) {
+            failRecoveryMarkerUnlinkForTests = null;
+            throw failure();
+          }
           deletePendingConfigMutationAuditAtPath(markerPath);
         } catch {
           // Best-effort after the recovery COMMIT: the row is durable and a leftover

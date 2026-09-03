@@ -10,6 +10,7 @@ import {
   saveConfig,
   saveConfigPreservingClaudeCode,
   setConfigAtomicWriteFailureForTests,
+  setConfigRecoveryMarkerUnlinkFailureForTests,
   setConfigPostWriteFailureForTests,
 } from "../src/config";
 import {
@@ -21,6 +22,7 @@ import {
   setReconcilePendingConfigMutationAuditOnReadBeforeCleanupForTests,
 } from "../src/config-mutation-audit";
 import { addProviderApiKey } from "../src/providers/api-keys";
+import { setProviderKeychainEntryFactoryForTests, type ProviderKeychainEntry } from "../src/providers/key-store";
 import { rotateKeyOn429 } from "../src/providers/key-failover";
 import { writeStorageCleanupPolicyToConfig } from "../src/storage/policy";
 import { setIntegrationEnabled } from "../src/codex/desired-state";
@@ -64,7 +66,9 @@ afterEach(() => {
   else process.env.OPENCODEX_HOME = previousHome;
   setConfigAuditMaxRowsForTests(null);
   setConfigAtomicWriteFailureForTests(null);
+  setConfigRecoveryMarkerUnlinkFailureForTests(null);
   setConfigPostWriteFailureForTests(null);
+  setProviderKeychainEntryFactoryForTests(null);
   setReconcilePendingConfigMutationAuditOnReadBeforeCleanupForTests(null);
   resetPreservedDiskOnlyProvidersForTests();
   rmSync(testRoot, { recursive: true, force: true });
@@ -898,18 +902,41 @@ describe("config mutation audit log", () => {
   test("a marker that cannot be unlinked after a recovery commit does not fail the save", () => {
     saveConfig(configWithProvider(10100));
     const configPath = join(testRoot, "config.json");
-    const bytes = JSON.stringify(configWithProvider(10500), null, 2) + "\n";
-    writeFileSync(configPath, bytes);
-    // A directory at the marker path makes unlink fail (EISDIR/EPERM) like a
-    // transient handle hold. The recovery COMMIT already succeeded, so a leftover
-    // marker must never turn the next save into a reported failure.
-    const lockedMarker = markerFile("locked-marker");
-    mkdirSync(lockedMarker, { recursive: true });
-    writeFileSync(join(lockedMarker, "placeholder"), "x");
-    expect(() => saveConfig(configWithProvider(10600), { surface: "cli", detail: "ocx next" })).not.toThrow();
-    expect(readFileSync(configPath, "utf8")).toContain("\"port\": 10600");
-    const audit = readConfigMutationAudit();
-    expect(audit.rows[0].detail).toBe("ocx next");
+    // Plant a VALID marker whose hash matches the on-disk bytes — the exact state a
+    // real writer leaves after a crash between the config rename and audit commit.
+    const interruptedBytes = JSON.stringify(configWithProvider(10500), null, 2) + "\n";
+    setConfigPostWriteFailureForTests(() => new Error("simulated post-rename failure"));
+    expect(() => saveConfig(configWithProvider(10500), {
+      surface: "api",
+      detail: "PUT /api/post-rename",
+    })).toThrow("simulated post-rename failure");
+    expect(readFileSync(configPath, "utf8")).toBe(interruptedBytes);
+    expect(listPendingConfigMutationAuditPaths(testRoot)).toHaveLength(1);
+
+    // Recovery COMMITs the row first; the one-shot unlink seam then throws, so
+    // the leftover marker must not turn the next save into a reported failure.
+    setConfigRecoveryMarkerUnlinkFailureForTests(() => new Error("simulated marker unlink failure"));
+    expect(() => saveConfig(configWithProvider(10600), { surface: "cli", detail: "ocx next-1" })).not.toThrow();
+    let audit = readConfigMutationAudit();
+    expect(audit.rows.filter(row => row.detail === "PUT /api/post-rename")).toHaveLength(1);
+    expect(listPendingConfigMutationAuditPaths(testRoot)).toHaveLength(1);
+
+    // Restore the interrupted bytes and let recovery replay the SAME marker:
+    // mutation-id dedupe must keep exactly one row while the unlink fails again.
+    writeFileSync(configPath, interruptedBytes);
+    setConfigRecoveryMarkerUnlinkFailureForTests(() => new Error("simulated marker unlink failure"));
+    expect(() => saveConfig(configWithProvider(10700), { surface: "cli", detail: "ocx next-2" })).not.toThrow();
+    audit = readConfigMutationAudit();
+    expect(audit.rows.filter(row => row.detail === "PUT /api/post-rename")).toHaveLength(1);
+    expect(audit.rows[0].detail).toBe("ocx next-2");
+    expect(listPendingConfigMutationAuditPaths(testRoot)).toHaveLength(1);
+
+    // Once the unlink succeeds the marker is removed and the row stays at one.
+    expect(() => saveConfig(configWithProvider(10800), { surface: "cli", detail: "ocx next-3" })).not.toThrow();
+    audit = readConfigMutationAudit();
+    expect(audit.rows.filter(row => row.detail === "PUT /api/post-rename")).toHaveLength(1);
+    expect(audit.rows[0].detail).toBe("ocx next-3");
+    expect(listPendingConfigMutationAuditPaths(testRoot)).toHaveLength(0);
   });
 
   test("proxy URL userinfo is never stored in the pending marker", () => {
@@ -1204,6 +1231,41 @@ describe("config mutation audit management API", () => {
     expect(rows[0].fields).toContain("anthropicAccountPool");
   });
 
+  test("generic OAuth pool persistence records api surface and route detail", async () => {
+    saveConfig({
+      port: 10100,
+      defaultProvider: "google-antigravity",
+      providers: {
+        "google-antigravity": {
+          adapter: "google",
+          baseUrl: "https://daily-cloudcode-pa.googleapis.com",
+          authMode: "oauth",
+        },
+      },
+    } as unknown as OcxConfig, { surface: "cli", detail: "ocx first" });
+    const url = new URL("http://127.0.0.1:10100/api/oauth/accounts/pool");
+    const response = await handleManagementAPI(
+      new Request(url, {
+        method: "PUT",
+        headers: { Host: "127.0.0.1:10100", "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider: "google-antigravity",
+          enabled: true,
+          strategy: "round-robin",
+        }),
+      }),
+      url,
+      loadConfig(),
+      {},
+      "admin-token",
+    );
+    expect(response?.status).toBe(200);
+    const { rows } = readConfigMutationAudit();
+    expect(rows[0].surface).toBe("api");
+    expect(rows[0].detail).toBe("PUT /api/oauth/accounts/pool");
+    expect(rows[0].fields).toContain("providers.google-antigravity.oauthAccountFailover");
+  });
+
   test("codex account management writes record api surface and route detail", async () => {
     saveConfig(configWithProvider(), { surface: "cli", detail: "ocx first" });
     const url = new URL("http://127.0.0.1:10100/api/codex-auth/auto-switch");
@@ -1285,6 +1347,141 @@ describe("config mutation audit attribution sweep", () => {
     expect(rows[0].surface).toBe("api");
     expect(rows[0].detail).toBe("POST /api/keys/rotate/commit");
     expect(rows[0].fields).toContain("apiKeys");
+  });
+
+  test("keychain store and restore record route-specific api details", async () => {
+    saveConfig(configWithProvider(), { surface: "cli", detail: "ocx first" });
+    const secrets = new Map<string, string>();
+    const factory = (service: string, account: string): ProviderKeychainEntry => {
+      const key = service + "\u0000" + account;
+      return {
+        getPassword: () => secrets.get(key) ?? null,
+        setPassword: value => { secrets.set(key, value); },
+        deletePassword: () => secrets.delete(key),
+      };
+    };
+    setProviderKeychainEntryFactoryForTests(factory);
+    try {
+      const url = new URL("http://127.0.0.1:10100/api/providers/keychain");
+      const store = await handleManagementAPI(
+        new Request(url, {
+          method: "POST",
+          headers: { Host: "127.0.0.1:10100", "Content-Type": "application/json" },
+          body: JSON.stringify({ name: "blsc", action: "store" }),
+        }),
+        url,
+        loadConfig(),
+        {},
+        "admin-token",
+      );
+      expect(store?.status).toBe(200);
+      let rows = readConfigMutationAudit().rows;
+      expect(rows[0].surface).toBe("api");
+      expect(rows[0].detail).toBe("POST /api/providers/keychain (store)");
+      expect(rows[0].fields).toContain("providers.blsc.apiKey");
+
+      const restore = await handleManagementAPI(
+        new Request(url, {
+          method: "POST",
+          headers: { Host: "127.0.0.1:10100", "Content-Type": "application/json" },
+          body: JSON.stringify({ name: "blsc", action: "restore" }),
+        }),
+        url,
+        loadConfig(),
+        {},
+        "admin-token",
+      );
+      expect(restore?.status).toBe(200);
+      rows = readConfigMutationAudit().rows;
+      expect(rows[0].surface).toBe("api");
+      expect(rows[0].detail).toBe("POST /api/providers/keychain (restore)");
+      expect(rows[0].fields).toContain("providers.blsc.apiKey");
+    } finally {
+      setProviderKeychainEntryFactoryForTests(null);
+    }
+  });
+
+  test("expired rotation cleanup during GET and commit records route-specific details", async () => {
+    const past = new Date(0).toISOString();
+    const key = "ocx_data_0123456789abcdef0123456789abcdef01234567";
+    const seedExpired = () => {
+      const config = configWithProvider();
+      config.apiKeys = [{
+        id: "admission-expired", name: "admission", key, createdAt: past,
+        pendingRotation: {
+          id: "rotation-expired", key, createdAt: past, expiresAt: past,
+        },
+      }];
+      saveConfig(config, { surface: "cli", detail: "ocx first" });
+    };
+
+    seedExpired();
+    const keysUrl = new URL("http://127.0.0.1:10100/api/keys");
+    const list = await handleManagementAPI(
+      new Request(keysUrl, { headers: { Host: "127.0.0.1:10100" } }),
+      keysUrl,
+      loadConfig(),
+      {},
+      "admin-token",
+    );
+    expect(list?.status).toBe(200);
+    let rows = readConfigMutationAudit().rows;
+    expect(rows[0].surface).toBe("api");
+    expect(rows[0].detail).toBe("GET /api/keys (expired rotation cleanup)");
+    expect(rows[0].fields).toContain("apiKeys");
+    expect(loadConfig().apiKeys?.[0]?.pendingRotation).toBeUndefined();
+
+    seedExpired();
+    const commitUrl = new URL("http://127.0.0.1:10100/api/keys/rotate/commit");
+    const commit = await handleManagementAPI(
+      new Request(commitUrl, {
+        method: "POST",
+        headers: { Host: "127.0.0.1:10100", "Content-Type": "application/json" },
+        body: JSON.stringify({ id: "admission-expired", rotationId: "rotation-expired" }),
+      }),
+      commitUrl,
+      loadConfig(),
+      {},
+      "admin-token",
+    );
+    expect(commit?.status).toBe(409);
+    rows = readConfigMutationAudit().rows;
+    expect(rows[0].surface).toBe("api");
+    expect(rows[0].detail).toBe("POST /api/keys/rotate/commit (expired rotation cleanup)");
+    expect(rows[0].fields).toContain("apiKeys");
+  });
+
+  test("rotation abort records DELETE /api/keys/rotate", async () => {
+    const now = Date.now();
+    const createdAt = new Date(now).toISOString();
+    const key = "ocx_data_0123456789abcdef0123456789abcdef01234567";
+    const config = configWithProvider();
+    config.apiKeys = [{
+      id: "admission-abort", name: "admission", key, createdAt,
+      pendingRotation: {
+        id: "rotation-abort", key, createdAt,
+        expiresAt: new Date(now + 60_000).toISOString(),
+      },
+    }];
+    saveConfig(config, { surface: "cli", detail: "ocx first" });
+    const url = new URL("http://127.0.0.1:10100/api/keys/rotate");
+    const response = await handleManagementAPI(
+      new Request(url, {
+        method: "DELETE",
+        headers: { Host: "127.0.0.1:10100", "Content-Type": "application/json" },
+        body: JSON.stringify({ id: "admission-abort", rotationId: "rotation-abort" }),
+      }),
+      url,
+      loadConfig(),
+      {},
+      "admin-token",
+    );
+    expect(response?.status).toBe(200);
+    const rows = readConfigMutationAudit().rows;
+    expect(rows[0].surface).toBe("api");
+    expect(rows[0].detail).toBe("DELETE /api/keys/rotate");
+    expect(rows[0].fields).toContain("apiKeys");
+    expect(loadConfig().apiKeys?.[0]?.pendingRotation).toBeUndefined();
   });
 
   test("client connection commit and clear record cli operation details", () => {
