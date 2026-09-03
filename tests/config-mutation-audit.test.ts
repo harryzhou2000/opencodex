@@ -1313,6 +1313,7 @@ describe("config mutation audit attribution sweep", () => {
 
   test("GET /api/config/mutations defaults missing, blank, non-positive, or unparseable limits to 100", async () => {
     saveConfig(configWithProvider(), { surface: "api", detail: "PUT /api/audit-seed" });
+    saveConfig(configWithProvider(10200), { surface: "api", detail: "PUT /api/audit-seed-2" });
     const config = loadConfig();
     for (const suffix of ["", "?limit=", "?limit=0", "?limit=-1", "?limit=abc", "?limit=1.5"]) {
       const url = new URL(`http://127.0.0.1:10100/api/config/mutations${suffix}`);
@@ -1325,8 +1326,10 @@ describe("config mutation audit attribution sweep", () => {
       );
       expect(response?.status).toBe(200);
       const body = await response!.json() as { mutations: Array<{ detail?: string }> };
-      expect(body.mutations.length).toBeGreaterThan(0);
-      expect(body.mutations[0]?.detail).toBe("PUT /api/audit-seed");
+      // Two mutations make the fallback limit (100) distinguishable from limit=1: the
+      // fallback must return more than one row, while an explicit limit=1 returns one.
+      expect(body.mutations.length).toBeGreaterThan(1);
+      expect(body.mutations[0]?.detail).toBe("PUT /api/audit-seed-2");
     }
     const limited = new URL("http://127.0.0.1:10100/api/config/mutations?limit=1");
     const limitedResponse = await handleManagementAPI(
