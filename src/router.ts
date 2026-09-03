@@ -382,6 +382,17 @@ export function routedProviderConfig(providerName: string, provider: OcxProvider
       && registryEntry.annotateEmptyToolOutputs !== undefined
       ? { annotateEmptyToolOutputs: registryEntry.annotateEmptyToolOutputs }
       : {}),
+    ...(provider.autoReviewModel === undefined && registryEntry.autoReviewModel !== undefined
+      ? { autoReviewModel: registryEntry.autoReviewModel }
+      : {}),
+    ...(provider.autoReviewModelOverrides !== undefined || registryEntry.autoReviewModelOverrides !== undefined
+      ? {
+        autoReviewModelOverrides: {
+          ...(registryEntry.autoReviewModelOverrides ?? {}),
+          ...(provider.autoReviewModelOverrides ?? {}),
+        },
+      }
+      : {}),
     ...(provider.fastWire === undefined && registryEntry.fastWire !== undefined
       ? {
         fastWire: cloneFastWire(registryEntry.fastWire),

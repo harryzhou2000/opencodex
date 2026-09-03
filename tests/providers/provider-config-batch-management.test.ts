@@ -170,6 +170,37 @@ describe("atomic provider editor batch", () => {
     });
   });
 
+  test("provider editor PUT persists normalized trimmed auto-review fields", async () => {
+    const liveConfig = seededConfig();
+    saveConfig(liveConfig);
+    const baseline = editorBaseline(liveConfig);
+    const next: EditorConfig = structuredClone(baseline);
+    next.providers.alpha = {
+      ...baseline.providers.alpha,
+      autoReviewModel: "  alpha-approver  ",
+      autoReviewModelOverrides: { " alpha-worker ": "  alpha-reviewer  " },
+    };
+
+    const destinationSpy = spyOn(destinationPolicy, "providerDestinationResolvedError").mockResolvedValue(null);
+    let response: Response | null;
+    try {
+      response = await putBatch(liveConfig, { baseline, next });
+    } finally {
+      destinationSpy.mockRestore();
+    }
+    expect(response?.status).toBe(200);
+    const persisted = loadConfig();
+    expect(persisted.providers.alpha).toMatchObject({
+      autoReviewModel: "alpha-approver",
+      autoReviewModelOverrides: { "alpha-worker": "alpha-reviewer" },
+    });
+    const onDisk = JSON.parse(readFileSync(getConfigPath(), "utf8")) as OcxConfig;
+    expect(onDisk.providers.alpha).toMatchObject({
+      autoReviewModel: "alpha-approver",
+      autoReviewModelOverrides: { "alpha-worker": "alpha-reviewer" },
+    });
+  });
+
   test("updates several providers in one commit and preserves credentials and private fields", async () => {
     const liveConfig = seededConfig();
     saveConfig(liveConfig);
