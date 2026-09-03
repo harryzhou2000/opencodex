@@ -1066,10 +1066,13 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
     restorePersistedAliasOverlays(prov, liveExisting);
     // The GUI form cannot send the auto-review overrides, so an unrelated resave
     // must not erase hand-configured values; clearing goes through PATCH with null.
-    if (!submittedAutoReviewModel && liveExisting?.autoReviewModel !== undefined) {
+    // Canonical openai is the exception: those fields are prohibited there, and a
+    // legacy row that predates the prohibition is cleaned up by an unrelated full
+    // edit instead of being resurrected from the live provider.
+    if (!submittedAutoReviewModel && name !== "openai" && liveExisting?.autoReviewModel !== undefined) {
       prov.autoReviewModel = liveExisting.autoReviewModel;
     }
-    if (!submittedAutoReviewModelOverrides && liveExisting?.autoReviewModelOverrides !== undefined) {
+    if (!submittedAutoReviewModelOverrides && name !== "openai" && liveExisting?.autoReviewModelOverrides !== undefined) {
       prov.autoReviewModelOverrides = { ...liveExisting.autoReviewModelOverrides };
     }
     // POST passed boundary validation above; trim the submitted values so the persisted

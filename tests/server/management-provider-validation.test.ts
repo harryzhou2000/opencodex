@@ -1319,6 +1319,54 @@ describe("provider management validation", () => {
     }
   });
 
+  test("an unrelated canonical openai POST clears legacy auto-review fields", async () => {
+    if (existsSync(TEST_DIR)) removeTreeWithRetry(TEST_DIR);
+    mkdirSync(TEST_DIR, { recursive: true });
+    process.env.OPENCODEX_HOME = TEST_DIR;
+    saveConfig({
+      port: 0,
+      openaiProviderTierVersion: 2,
+      defaultProvider: "openai",
+      providers: { openai: { ...canonicalDirect } },
+    } as OcxConfig);
+    // A legacy row that predates the prohibition can still be carried by a live
+    // process that started before the validation landed; an unrelated full edit
+    // must not resurrect either field into the persisted document.
+    const liveConfig = {
+      port: 0,
+      openaiProviderTierVersion: 2,
+      defaultProvider: "openai",
+      providers: {
+        openai: {
+          ...canonicalDirect,
+          autoReviewModel: "deepseek-v4-flash",
+          autoReviewModelOverrides: { "deepseek-v4-flash-vision-exp": "deepseek-v4-pro" },
+        },
+      },
+    } as OcxConfig;
+    const resolvedError = spyOn(destinationPolicy, "providerDestinationResolvedError").mockResolvedValue(null);
+    try {
+      const request = new Request("http://127.0.0.1/api/providers", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "openai", provider: canonicalDirect }),
+      });
+      const response = await handleManagementAPI(request, new URL(request.url), liveConfig, {
+        createManagementConvergeCodex: catalogConvergenceFactory(),
+      });
+      expect(response?.status).toBe(200);
+      const persisted = JSON.parse(readFileSync(join(TEST_DIR, "config.json"), "utf8")) as {
+        providers?: { openai?: Record<string, unknown> };
+      };
+      expect(persisted.providers?.openai?.autoReviewModel).toBeUndefined();
+      expect(persisted.providers?.openai?.autoReviewModelOverrides).toBeUndefined();
+      expect(liveConfig.providers.openai?.autoReviewModel).toBeUndefined();
+      expect(liveConfig.providers.openai?.autoReviewModelOverrides).toBeUndefined();
+    } finally {
+      resolvedError.mockRestore();
+    }
+  });
+
   test("general provider writes cannot introduce a provider alias collision", async () => {
     if (existsSync(TEST_DIR)) removeTreeWithRetry(TEST_DIR);
     mkdirSync(TEST_DIR, { recursive: true });
