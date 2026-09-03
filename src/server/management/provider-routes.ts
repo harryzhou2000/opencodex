@@ -1004,70 +1004,73 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
     const submittedAnnotateEmptyToolOutputs = Object.hasOwn(prov, "annotateEmptyToolOutputs");
     enrichProviderFromCatalog(name, prov);
     const { saveConfigPreservingClaudeCode: save } = await import("../../config");
+    // DNS validation and the lazy import above await. Re-read the LIVE row only now: a
+    // concurrent PATCH that completed during those waits replaces the provider row object,
+    // so the pre-await `existing` snapshot must stay an admission/ownership input and never
+    // become the write source for carried-over fields (review finding, auto-review
+    // interleaving; same rule applies to windows, labels, pacing, and transport toggles).
+    const liveExisting = config.providers[name];
     // Overwriting an existing provider must not drop its multi-key pool: carry it over, then
     // let the (possibly new) apiKey join the pool as the active entry.
-    const existingPool = config.providers[name]?.apiKeyPool;
+    const existingPool = liveExisting?.apiKeyPool;
     if (existingPool && !prov.apiKeyPool) prov.apiKeyPool = existingPool;
     // The same rule applies to user-configured price overlays: the dashboard's
     // add/edit form does not send modelCosts, so an overwrite must not silently
     // erase hand-edited per-model prices from Logs/Usage estimates.
-    const existingCosts = config.providers[name]?.modelCosts;
+    const existingCosts = liveExisting?.modelCosts;
     if (existingCosts && !prov.modelCosts) prov.modelCosts = existingCosts;
     // And to the per-provider account-failover opt-out (#2568d). `ProviderPayload` has no
     // member for it either, so an add/edit save structurally cannot carry it — and dropping it
     // silently ENABLES rotation, because activation is presence-driven once the knob is gone.
     // An overwrite must not spend a second subscription account's quota as a side effect.
-    const existingFailover = config.providers[name]?.oauthAccountFailover;
+    const existingFailover = liveExisting?.oauthAccountFailover;
     if (existingFailover && !prov.oauthAccountFailover) prov.oauthAccountFailover = existingFailover;
     // ...and to hand-edited context windows. `ProviderPayload` (gui/src/provider-payload.ts)
     // has no member for either field, so the add/edit form structurally cannot send them:
     // absence in the request means "not carried", never "the user deleted it". Deletion goes
     // through PATCH with an explicit null (#1409).
-    if (!submittedModelDisplayNames && existing?.modelDisplayNames) {
-      prov.modelDisplayNames = { ...existing.modelDisplayNames };
+    if (!submittedModelDisplayNames && liveExisting?.modelDisplayNames) {
+      prov.modelDisplayNames = { ...liveExisting.modelDisplayNames };
     }
-    if (!submittedRequestPacing && existing?.requestPacing) {
-      prov.requestPacing = structuredClone(existing.requestPacing);
+    if (!submittedRequestPacing && liveExisting?.requestPacing) {
+      prov.requestPacing = structuredClone(liveExisting.requestPacing);
     }
-    if (!submittedContextWindow && existing?.contextWindow !== undefined) {
-      prov.contextWindow = existing.contextWindow;
+    if (!submittedContextWindow && liveExisting?.contextWindow !== undefined) {
+      prov.contextWindow = liveExisting.contextWindow;
     }
     // `!== undefined` rather than a truthiness test: the whole point of this field is that
     // an explicit `false` must survive, and `false` is falsy.
-    if (!submittedAnnotateEmptyToolOutputs && existing?.annotateEmptyToolOutputs !== undefined) {
-      prov.annotateEmptyToolOutputs = existing.annotateEmptyToolOutputs;
+    if (!submittedAnnotateEmptyToolOutputs && liveExisting?.annotateEmptyToolOutputs !== undefined) {
+      prov.annotateEmptyToolOutputs = liveExisting.annotateEmptyToolOutputs;
     }
     // The provider add/edit form may omit this transport option. Preserve the stored value
     // during a full overwrite; PATCH remains the explicit mutation path, and `!== undefined`
     // keeps an operator's explicit false from being treated as absent.
-    if (!submittedUpstreamWebsocket && existing?.upstreamWebsocket !== undefined) {
-      prov.upstreamWebsocket = existing.upstreamWebsocket;
+    if (!submittedUpstreamWebsocket && liveExisting?.upstreamWebsocket !== undefined) {
+      prov.upstreamWebsocket = liveExisting.upstreamWebsocket;
     }
-    if (existing?.modelContextWindows) {
+    if (liveExisting?.modelContextWindows) {
       // When the client did send a map, its keys win and the user's other keys survive. When
       // it did not, the stored value is the user's map alone: merging the registry seed in
       // would persist seed keys into user config as a side effect of an unrelated save, and
       // router.ts already fills registry values beneath user entries at resolve time.
       prov.modelContextWindows = submittedModelContextWindows
-        ? { ...existing.modelContextWindows, ...(prov.modelContextWindows ?? {}) }
-        : { ...existing.modelContextWindows };
+        ? { ...liveExisting.modelContextWindows, ...(prov.modelContextWindows ?? {}) }
+        : { ...liveExisting.modelContextWindows };
     }
-    if (existing?.modelAutoCompactTokenLimits) {
+    if (liveExisting?.modelAutoCompactTokenLimits) {
       prov.modelAutoCompactTokenLimits = submittedModelAutoCompactTokenLimits
-        ? { ...existing.modelAutoCompactTokenLimits, ...(prov.modelAutoCompactTokenLimits ?? {}) }
-        : { ...existing.modelAutoCompactTokenLimits };
+        ? { ...liveExisting.modelAutoCompactTokenLimits, ...(prov.modelAutoCompactTokenLimits ?? {}) }
+        : { ...liveExisting.modelAutoCompactTokenLimits };
     }
-    // DNS validation above awaits. Re-read the live row so a dedicated alias write that
-    // completed during that wait remains authoritative instead of being overwritten by the
-    // older ownership snapshot used to admit this POST.
-    restorePersistedAliasOverlays(prov, config.providers[name]);
+    restorePersistedAliasOverlays(prov, liveExisting);
     // The GUI form cannot send the auto-review overrides, so an unrelated resave
     // must not erase hand-configured values; clearing goes through PATCH with null.
-    if (!submittedAutoReviewModel && config.providers[name]?.autoReviewModel !== undefined) {
-      prov.autoReviewModel = config.providers[name]!.autoReviewModel;
+    if (!submittedAutoReviewModel && liveExisting?.autoReviewModel !== undefined) {
+      prov.autoReviewModel = liveExisting.autoReviewModel;
     }
-    if (!submittedAutoReviewModelOverrides && config.providers[name]?.autoReviewModelOverrides !== undefined) {
-      prov.autoReviewModelOverrides = { ...config.providers[name]!.autoReviewModelOverrides };
+    if (!submittedAutoReviewModelOverrides && liveExisting?.autoReviewModelOverrides !== undefined) {
+      prov.autoReviewModelOverrides = { ...liveExisting.autoReviewModelOverrides };
     }
     // POST passed boundary validation above; trim the submitted values so the persisted
     // config.json holds canonical ids (same normalizer as PATCH).

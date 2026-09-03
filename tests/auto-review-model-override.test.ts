@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { resolveAutoReviewModel } from "../src/providers/derive";
-import { applyAutoReviewModelOverride, deriveEntry, resetCatalogRuntimeStateForTests, validateAutoReviewOverridesAgainstCatalog } from "../src/codex/catalog/sync";
+import { applyAutoReviewModelOverride, deriveEntry, finalizeAutoReviewModelOverride, resetCatalogRuntimeStateForTests, validateAutoReviewOverridesAgainstCatalog } from "../src/codex/catalog/sync";
 import { applyProviderConfigHints } from "../src/codex/catalog/provider-fetch";
 import { autoReviewModelConfigError, normalizeAutoReviewModelFields } from "../src/config/provider-validation";
 import { loadConfig } from "../src/config";
@@ -8,6 +8,7 @@ import { PROVIDER_REGISTRY } from "../src/providers/registry";
 import { providerConfigSeed } from "../src/providers/derive";
 import { routedProviderConfig } from "../src/router";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CatalogModel } from "../src/codex/catalog/parsing";
 import type { OcxProviderConfig } from "../src/types";
@@ -504,6 +505,65 @@ describe("global auto_review_model precedence (provider stamp vs root selector)"
       expect(entries[2].auto_review_model_override).toBe("deepseek/deepseek-v4-flash");
       expect(entries[3].auto_review_model_override).toBe("blsc/glm-5.2");
     } finally {
+      resetCatalogRuntimeStateForTests();
+    }
+  });
+
+  test("durable root marker survives apply -> serialize -> regenerate -> remove through the finalize path", () => {
+    resetCatalogRuntimeStateForTests();
+    const originalCodexHome = process.env.CODEX_HOME;
+    const tempHome = mkdtempSync(join(tmpdir(), "ocx-auto-review-home-"));
+    try {
+      const configPath = join(tempHome, "config.toml");
+      writeFileSync(configPath, 'auto_review_model = "opencode-go/deepseek-v4-pro"\n');
+      process.env.CODEX_HOME = tempHome;
+
+      // Phase 1: a regenerate runs while the root selector is configured. The routed row
+      // carries its provider-derived stamp; native and unstamped routed rows receive the
+      // root selector with the durable per-row marker.
+      const onDiskBeforeRoot: Array<Record<string, unknown>> = [
+        { slug: "gpt-5.5", auto_review_model_override: null },
+        { slug: "opencode-go/deepseek-v4-pro", auto_review_model_override: null },
+        { slug: "deepseek/deepseek-v4-flash", auto_review_model_override: "deepseek/deepseek-v4-flash" },
+      ];
+      const freshWithRoot: Array<Record<string, unknown>> = [
+        { slug: "gpt-5.5", auto_review_model_override: null },
+        { slug: "opencode-go/deepseek-v4-pro", auto_review_model_override: null },
+        { slug: "deepseek/deepseek-v4-flash", auto_review_model_override: "deepseek/deepseek-v4-flash" },
+      ];
+      expect(finalizeAutoReviewModelOverride(freshWithRoot, onDiskBeforeRoot)).toBe("applied");
+      expect(freshWithRoot[0]!.auto_review_model_override).toBe("opencode-go/deepseek-v4-pro");
+      expect(freshWithRoot[0]!.opencodex_auto_review_root).toBe("opencode-go/deepseek-v4-pro");
+      expect(freshWithRoot[1]!.auto_review_model_override).toBe("opencode-go/deepseek-v4-pro");
+      expect(freshWithRoot[1]!.opencodex_auto_review_root).toBe("opencode-go/deepseek-v4-pro");
+      expect(freshWithRoot[2]!.auto_review_model_override).toBe("deepseek/deepseek-v4-flash");
+      expect(freshWithRoot[2]!.opencodex_auto_review_root).toBeUndefined();
+
+      // The stamped rows are what a retained sync would serialize to disk before restart.
+      const onDiskAfterRoot = structuredClone(freshWithRoot) as Array<Record<string, unknown>>;
+
+      // Phase 2: the operator removes the root selector and the process restarts, so the
+      // module-level selector memory is gone; only the durable marker identifies stale
+      // native copies when rows are preserved through the next regenerate.
+      writeFileSync(configPath, "# no auto_review_model configured\n");
+      resetCatalogRuntimeStateForTests();
+      const freshAfterRemoval: Array<Record<string, unknown>> = [
+        { slug: "gpt-5.5", auto_review_model_override: null },
+        { slug: "opencode-go/deepseek-v4-pro", auto_review_model_override: null },
+        { slug: "deepseek/deepseek-v4-flash", auto_review_model_override: "deepseek/deepseek-v4-flash" },
+      ];
+      expect(finalizeAutoReviewModelOverride(freshAfterRemoval, onDiskAfterRoot)).toBe("absent");
+      expect(freshAfterRemoval[0]!.auto_review_model_override).toBeNull();
+      expect(freshAfterRemoval[0]!.opencodex_auto_review_root).toBeUndefined();
+      expect(freshAfterRemoval[1]!.auto_review_model_override).toBeNull();
+      expect(freshAfterRemoval[1]!.opencodex_auto_review_root).toBeUndefined();
+      expect(freshAfterRemoval[2]!.auto_review_model_override).toBe("deepseek/deepseek-v4-flash");
+      expect(freshAfterRemoval[2]!.opencodex_auto_review_root).toBeUndefined();
+      validateAutoReviewOverridesAgainstCatalog(freshAfterRemoval);
+    } finally {
+      if (originalCodexHome === undefined) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = originalCodexHome;
+      rmSync(tempHome, { recursive: true, force: true });
       resetCatalogRuntimeStateForTests();
     }
   });

@@ -398,7 +398,13 @@ describe("atomic provider editor batch", () => {
     saveConfig(liveConfig);
 
     const destinationSpy = spyOn(destinationPolicy, "providerDestinationResolvedError").mockImplementation(async () => {
-      liveConfig.providers.alpha.autoReviewModel = "concurrent-reviewer";
+      // A concurrent PATCH replaces the provider row object rather than mutating it in
+      // place, so the pre-await snapshot used for carry-over must not be the write source.
+      liveConfig.providers.alpha = {
+        ...liveConfig.providers.alpha,
+        autoReviewModel: "concurrent-reviewer",
+        modelDisplayNames: { "alpha-old": "Concurrent label" },
+      };
       return null;
     });
     let response: Response | null;
@@ -420,5 +426,7 @@ describe("atomic provider editor batch", () => {
     expect(response?.status).toBe(200);
     expect(liveConfig.providers.alpha.autoReviewModel).toBe("concurrent-reviewer");
     expect(loadConfig().providers.alpha.autoReviewModel).toBe("concurrent-reviewer");
+    expect(liveConfig.providers.alpha.modelDisplayNames?.["alpha-old"]).toBe("Concurrent label");
+    expect(loadConfig().providers.alpha.modelDisplayNames?.["alpha-old"]).toBe("Concurrent label");
   });
 });
