@@ -2,10 +2,14 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { resolveAutoReviewModel } from "../src/providers/derive";
 import { applyAutoReviewModelOverride, deriveEntry, finalizeAutoReviewModelOverride, resetCatalogRuntimeStateForTests, validateAutoReviewOverridesAgainstCatalog } from "../src/codex/catalog/sync";
 import { applyProviderConfigHints } from "../src/codex/catalog/provider-fetch";
-import { autoReviewModelConfigError, normalizeAutoReviewModelFields } from "../src/config/provider-validation";
+import {
+  autoReviewModelConfigError,
+  normalizeAutoReviewModelFields,
+  sanitizeAutoReviewOverridesForLoad,
+} from "../src/config/provider-validation";
 import { loadConfig } from "../src/config";
 import { PROVIDER_REGISTRY } from "../src/providers/registry";
-import { providerConfigSeed } from "../src/providers/derive";
+import { enrichProviderFromRegistry, providerConfigSeed } from "../src/providers/derive";
 import { routedProviderConfig } from "../src/router";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -322,6 +326,67 @@ describe("load sanitization", () => {
     expect(loaded.providers.test?.autoReviewModel).toBeUndefined();
     expect(loaded.providers.test?.autoReviewModelOverrides).toBeUndefined();
   });
+
+  test("load sanitization removes override maps with canonical collisions and keeps unrelated providers", () => {
+    writeFileSync(join(testRoot, "config.json"), JSON.stringify({
+      port: 10100,
+      defaultProvider: "caseCollider",
+      providers: {
+        caseCollider: {
+          adapter: "openai-chat",
+          baseUrl: "https://case.example.test/v1",
+          apiKey: "sk-test",
+          autoReviewModelOverrides: {
+            "DEEPSEEK-V4-FLASH": "deepseek-v4-pro",
+            "deepseek-v4-flash": "deepseek-v4-flash",
+          },
+        },
+        trimCollider: {
+          adapter: "openai-chat",
+          baseUrl: "https://trim.example.test/v1",
+          apiKey: "sk-test",
+          autoReviewModelOverrides: {
+            " model-a ": "deepseek-v4-pro",
+            "model-a": "deepseek-v4-flash",
+          },
+        },
+        unrelated: {
+          adapter: "openai-chat",
+          baseUrl: "https://unrelated.example.test/v1",
+          apiKey: "sk-test",
+          autoReviewModel: "deepseek-v4-flash",
+        },
+      },
+    }));
+    const loaded = loadConfig();
+    expect(loaded.providers.caseCollider?.autoReviewModelOverrides).toBeUndefined();
+    expect(loaded.providers.trimCollider?.autoReviewModelOverrides).toBeUndefined();
+    expect(loaded.providers.unrelated?.autoReviewModel).toBe("deepseek-v4-flash");
+    expect(loaded.providers.caseCollider).toBeDefined();
+    expect(loaded.providers.trimCollider).toBeDefined();
+  });
+
+  test("load sanitizer strips prohibited auto-review fields from the openai provider", () => {
+    const parsed = {
+      providers: {
+        openai: {
+          adapter: "openai-responses",
+          baseUrl: "https://api.openai.com/v1",
+          autoReviewModel: "deepseek-v4-flash",
+          autoReviewModelOverrides: { "gpt-5.4": "gpt-5.4-nano" },
+        },
+        unrelated: {
+          adapter: "openai-chat",
+          baseUrl: "https://example.test/v1",
+          autoReviewModel: "deepseek-v4-flash",
+        },
+      },
+    };
+    sanitizeAutoReviewOverridesForLoad(parsed);
+    expect(parsed.providers.openai.autoReviewModel).toBeUndefined();
+    expect(parsed.providers.openai.autoReviewModelOverrides).toBeUndefined();
+    expect(parsed.providers.unrelated.autoReviewModel).toBe("deepseek-v4-flash");
+  });
 });
 
 describe("management validation and normalization", () => {
@@ -350,6 +415,26 @@ describe("management validation and normalization", () => {
   test("POST normalization rejects whitespace inside ids", () => {
     const provider = { autoReviewModel: "deep seek-v4-flash" };
     expect(normalizeAutoReviewModelFields("custom", provider)).toContain("autoReviewModel");
+  });
+
+  test("POST normalization rejects case-folded duplicate override keys", () => {
+    const provider = {
+      autoReviewModelOverrides: {
+        "DEEPSEEK-V4-FLASH": "deepseek-v4-pro",
+        "deepseek-v4-flash": "deepseek-v4-flash",
+      },
+    };
+    expect(normalizeAutoReviewModelFields("custom", provider)).toContain("unique after trimming and case folding");
+  });
+
+  test("POST normalization rejects whitespace-colliding duplicate override keys", () => {
+    const provider = {
+      autoReviewModelOverrides: {
+        " model-a ": "deepseek-v4-pro",
+        "model-a": "deepseek-v4-flash",
+      },
+    };
+    expect(normalizeAutoReviewModelFields("custom", provider)).toContain("unique after trimming and case folding");
   });
 });
 
@@ -393,6 +478,34 @@ describe("routed provider merge", () => {
     } finally {
       if (saved === undefined) delete entry!.autoReviewModel;
       else entry!.autoReviewModel = saved;
+    }
+  });
+
+  test("enrichment merges registry and provider override maps per key with provider winning", () => {
+    const entry = PROVIDER_REGISTRY.find(e => e.id === "deepseek");
+    expect(entry).toBeDefined();
+    const saved = entry!.autoReviewModelOverrides;
+    entry!.autoReviewModelOverrides = {
+      registryOnly: "deepseek/deepseek-v4-pro",
+      shared: "registry-default",
+    };
+    try {
+      const provider = providerConfigSeed(entry!);
+      // Simulate a hand-edited map that replaced the seeded defaults wholesale
+      // before enrichment, which previously hid the disjoint registry entries.
+      provider.autoReviewModelOverrides = {
+        providerOnly: "deepseek/deepseek-v4-flash",
+        shared: "provider-override",
+      };
+      enrichProviderFromRegistry("deepseek", provider);
+      expect(provider.autoReviewModelOverrides).toEqual({
+        registryOnly: "deepseek/deepseek-v4-pro",
+        providerOnly: "deepseek/deepseek-v4-flash",
+        shared: "provider-override",
+      });
+    } finally {
+      if (saved === undefined) delete entry!.autoReviewModelOverrides;
+      else entry!.autoReviewModelOverrides = saved;
     }
   });
 });

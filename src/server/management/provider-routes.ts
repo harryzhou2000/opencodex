@@ -1077,7 +1077,10 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
     }
     // POST passed boundary validation above; trim the submitted values so the persisted
     // config.json holds canonical ids (same normalizer as PATCH).
-    normalizeAutoReviewModelFields(name, prov);
+    const normalizationError = normalizeAutoReviewModelFields(name, prov);
+    if (normalizationError) {
+      return jsonResponse({ error: normalizationError, code: "invalid_provider" }, 400);
+    }
     initializeProviderModelSelection(name, prov, config.providers[name], config);
     config.providers[name] = stripRegistryOnlyStaticHeaders(name, prov);
     if (body.setDefault === true) config.defaultProvider = name;

@@ -531,8 +531,11 @@ export function enrichProviderFromRegistry(name: string, prov: OcxProviderConfig
   if (prov.autoReviewModel === undefined && seed.autoReviewModel !== undefined) {
     prov.autoReviewModel = seed.autoReviewModel;
   }
-  if (prov.autoReviewModelOverrides === undefined && seed.autoReviewModelOverrides !== undefined) {
-    prov.autoReviewModelOverrides = { ...seed.autoReviewModelOverrides };
+  if (seed.autoReviewModelOverrides !== undefined || prov.autoReviewModelOverrides !== undefined) {
+    prov.autoReviewModelOverrides = {
+      ...(seed.autoReviewModelOverrides ?? {}),
+      ...(prov.autoReviewModelOverrides ?? {}),
+    };
   }
   // Registry-only metadata (never seeded into saved config): backfill straight from
   // the entry so an explicit user value stays distinguishable from the default.

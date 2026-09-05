@@ -171,15 +171,18 @@ export function normalizeAutoReviewModelOverridesField(value: unknown):
     return { error: "autoReviewModelOverrides must be an object mapping model ids to approval model ids, or null to clear" };
   }
   const cleaned: Record<string, string> = {};
+  const canonicalSeen = new Set<string>();
   for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
     const trimmedKey = key.trim();
     const trimmedEntry = typeof entry === "string" ? entry.trim() : "";
     if (trimmedKey === "" || /\s/.test(trimmedKey) || trimmedEntry === "" || /\s/.test(trimmedEntry)) {
       return { error: "autoReviewModelOverrides entries must be nonblank model ids without whitespace" };
     }
-    if (Object.hasOwn(cleaned, trimmedKey)) {
-      return { error: "autoReviewModelOverrides keys must be unique after trimming" };
+    const canonicalKey = trimmedKey.toLowerCase();
+    if (canonicalSeen.has(canonicalKey)) {
+      return { error: "autoReviewModelOverrides keys must be unique after trimming and case folding" };
     }
+    canonicalSeen.add(canonicalKey);
     cleaned[trimmedKey] = trimmedEntry;
   }
   return { value: cleaned };
@@ -217,9 +220,14 @@ export function sanitizeAutoReviewOverridesForLoad(parsed: unknown): void {
   const root = parsed as Record<string, unknown>;
   const providers = root.providers;
   if (!providers || typeof providers !== "object" || Array.isArray(providers)) return;
-  for (const provider of Object.values(providers as Record<string, unknown>)) {
+  for (const [name, provider] of Object.entries(providers as Record<string, unknown>)) {
     if (!provider || typeof provider !== "object" || Array.isArray(provider)) continue;
     const row = provider as Record<string, unknown>;
+    if (name === "openai") {
+      delete row.autoReviewModel;
+      delete row.autoReviewModelOverrides;
+      continue;
+    }
     if (row.autoReviewModel !== undefined) {
       const value = typeof row.autoReviewModel === "string" ? row.autoReviewModel.trim() : "";
       row.autoReviewModel = value !== "" && !/\s/.test(value) ? value : undefined;
@@ -231,14 +239,22 @@ export function sanitizeAutoReviewOverridesForLoad(parsed: unknown): void {
         continue;
       }
       const cleaned: Record<string, string> = {};
+      const canonicalSeen = new Set<string>();
+      let collision = false;
       for (const [key, value] of Object.entries(overrides as Record<string, unknown>)) {
         const trimmedKey = key.trim();
         if (trimmedKey === "" || /\s/.test(trimmedKey)) continue;
         const trimmedValue = typeof value === "string" ? value.trim() : "";
         if (trimmedValue === "" || /\s/.test(trimmedValue)) continue;
+        const canonicalKey = trimmedKey.toLowerCase();
+        if (canonicalSeen.has(canonicalKey)) {
+          collision = true;
+          break;
+        }
+        canonicalSeen.add(canonicalKey);
         cleaned[trimmedKey] = trimmedValue;
       }
-      row.autoReviewModelOverrides = Object.keys(cleaned).length > 0 ? cleaned : undefined;
+      row.autoReviewModelOverrides = collision || Object.keys(cleaned).length === 0 ? undefined : cleaned;
     }
   }
 }
