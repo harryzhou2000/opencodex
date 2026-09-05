@@ -508,6 +508,54 @@ describe("routed provider merge", () => {
       else entry!.autoReviewModelOverrides = saved;
     }
   });
+
+  test("routed merge replaces a case-variant registry override with the provider value", () => {
+    const entry = PROVIDER_REGISTRY.find(e => e.id === "deepseek");
+    expect(entry).toBeDefined();
+    const saved = entry!.autoReviewModelOverrides;
+    entry!.autoReviewModelOverrides = {
+      "DEEPSEEK-V4-FLASH": "deepseek/deepseek-v4-pro",
+      "vision-exp": "deepseek/deepseek-v4-flash",
+    };
+    try {
+      const provider = providerConfigSeed(entry!);
+      provider.autoReviewModelOverrides = {
+        "deepseek-v4-flash": "deepseek/deepseek-v4-flash",
+      };
+      const routed = routedProviderConfig("deepseek", provider);
+      expect(routed.autoReviewModelOverrides).toEqual({
+        "deepseek-v4-flash": "deepseek/deepseek-v4-flash",
+        "vision-exp": "deepseek/deepseek-v4-flash",
+      });
+    } finally {
+      if (saved === undefined) delete entry!.autoReviewModelOverrides;
+      else entry!.autoReviewModelOverrides = saved;
+    }
+  });
+
+  test("enrichment replaces a case-variant registry override with the provider value", () => {
+    const entry = PROVIDER_REGISTRY.find(e => e.id === "deepseek");
+    expect(entry).toBeDefined();
+    const saved = entry!.autoReviewModelOverrides;
+    entry!.autoReviewModelOverrides = {
+      "DEEPSEEK-V4-FLASH": "deepseek/deepseek-v4-pro",
+      "vision-exp": "deepseek/deepseek-v4-flash",
+    };
+    try {
+      const provider = providerConfigSeed(entry!);
+      provider.autoReviewModelOverrides = {
+        "deepseek-v4-flash": "deepseek/deepseek-v4-flash",
+      };
+      enrichProviderFromRegistry("deepseek", provider);
+      expect(provider.autoReviewModelOverrides).toEqual({
+        "deepseek-v4-flash": "deepseek/deepseek-v4-flash",
+        "vision-exp": "deepseek/deepseek-v4-flash",
+      });
+    } finally {
+      if (saved === undefined) delete entry!.autoReviewModelOverrides;
+      else entry!.autoReviewModelOverrides = saved;
+    }
+  });
 });
 
 describe("global auto_review_model precedence (provider stamp vs root selector)", () => {

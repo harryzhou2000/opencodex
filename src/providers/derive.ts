@@ -453,6 +453,32 @@ export function hasLegacyClinePassReasoningEfforts(name: string, prov: OcxProvid
     && prov.reasoningEfforts[0] === "low";
 }
 
+/**
+ * Merge auto-review override maps with provider precedence that is case-insensitive.
+ *
+ * The per-model resolver case-folds lookup keys, so an inherited registry entry such as
+ * "DEEPSEEK-V4-FLASH" would otherwise stay beside a provider override "deepseek-v4-flash"
+ * and win (or lose) depending on the routed model's casing. A provider entry replaces any
+ * inherited entry whose key matches after case folding, while disjoint entries are retained.
+ */
+export function mergeAutoReviewModelOverrides(
+  inherited: Record<string, string> | undefined,
+  provider: Record<string, string> | undefined,
+): Record<string, string> | undefined {
+  if (inherited === undefined && provider === undefined) return undefined;
+  const merged: Record<string, string> = { ...(inherited ?? {}) };
+  const foldedToKey = new Map<string, string>();
+  for (const key of Object.keys(merged)) foldedToKey.set(key.toLowerCase(), key);
+  for (const [key, value] of Object.entries(provider ?? {})) {
+    const folded = key.toLowerCase();
+    const inheritedKey = foldedToKey.get(folded);
+    if (inheritedKey !== undefined && inheritedKey !== key) delete merged[inheritedKey];
+    merged[key] = value;
+    foldedToKey.set(folded, key);
+  }
+  return merged;
+}
+
 export function enrichProviderFromRegistry(name: string, prov: OcxProviderConfig): void {
   const entry = PROVIDER_REGISTRY.find(row => row.id === name);
   if (!entry || !providerMatchesRegistryTransportWithStaticGuards(name, prov)) {
@@ -532,10 +558,10 @@ export function enrichProviderFromRegistry(name: string, prov: OcxProviderConfig
     prov.autoReviewModel = seed.autoReviewModel;
   }
   if (seed.autoReviewModelOverrides !== undefined || prov.autoReviewModelOverrides !== undefined) {
-    prov.autoReviewModelOverrides = {
-      ...(seed.autoReviewModelOverrides ?? {}),
-      ...(prov.autoReviewModelOverrides ?? {}),
-    };
+    prov.autoReviewModelOverrides = mergeAutoReviewModelOverrides(
+      seed.autoReviewModelOverrides,
+      prov.autoReviewModelOverrides,
+    );
   }
   // Registry-only metadata (never seeded into saved config): backfill straight from
   // the entry so an explicit user value stays distinguishable from the default.
