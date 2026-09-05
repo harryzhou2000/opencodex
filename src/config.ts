@@ -2960,8 +2960,8 @@ export function prepareConfigMutationDatabasePathForWrite(): string {
 
 let configMutationLockDepth = 0;
 let configMutationDatabase: Database | null = null;
-/** The mutation id whose marker is deleted after the surrounding transaction commits. */
-let pendingConfigMutationAuditCleanup: string | null = null;
+/** Mutation ids whose markers are deleted after the surrounding transaction commits. */
+let pendingConfigMutationAuditCleanup: Set<string> | null = null;
 /** Test-only seam: fail the config.json atomic write AFTER the pending marker is persisted. */
 let failConfigAtomicWriteForTests: (() => Error) | null = null;
 /** Test-only seam: fail the config.json atomic write AFTER the rename lands, before the audit commit. */
@@ -3075,15 +3075,17 @@ export function withConfigMutationLockSync<T>(fn: () => T): T {
     const value = fn();
     database.exec("COMMIT");
     transactionOpen = false;
-    if (pendingConfigMutationAuditCleanup) {
-      const mutationId = pendingConfigMutationAuditCleanup;
+    if (pendingConfigMutationAuditCleanup && pendingConfigMutationAuditCleanup.size > 0) {
+      const mutationIds = [...pendingConfigMutationAuditCleanup];
       pendingConfigMutationAuditCleanup = null;
-      try {
-        deletePendingConfigMutationAudit(getConfigDir(), mutationId);
-      } catch {
-        // Best-effort after the COMMIT: the audit row is durable. A leftover marker
-        // is harmless and the next recovery reconciles it, so an unlink failure
-        // (e.g. a transient handle hold) must not surface as a failed write.
+      for (const mutationId of mutationIds) {
+        try {
+          deletePendingConfigMutationAudit(getConfigDir(), mutationId);
+        } catch {
+          // Best-effort after the COMMIT: the audit row is durable. A leftover marker
+          // is harmless and the next recovery reconciles it, so an unlink failure
+          // (e.g. a transient handle hold) must not surface as a failed write.
+        }
       }
     }
     return value;
@@ -3277,7 +3279,10 @@ function persistConfigUnlocked(
   refreshUserCostOverlays(persisted);
   if (audit && configMutationDatabase) {
     const recorded = recordPendingConfigMutationAuditNow(configMutationDatabase, getConfigDir(), auditMutationId!);
-    pendingConfigMutationAuditCleanup = recorded ? auditMutationId : null;
+    if (recorded && auditMutationId) {
+      if (!pendingConfigMutationAuditCleanup) pendingConfigMutationAuditCleanup = new Set();
+      pendingConfigMutationAuditCleanup.add(auditMutationId);
+    }
   }
   return persisted;
 }

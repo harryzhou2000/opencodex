@@ -289,7 +289,10 @@ export async function handleConfigRoutes(ctx: ManagementContext): Promise<Respon
     const requested = rawLimit === null || rawLimit.trim() === "" ? 100 : Number(rawLimit);
     const effectiveLimit = Number.isInteger(requested) && requested > 0 ? requested : 100;
     const { rows, maxRows } = readConfigMutationAudit(effectiveLimit);
-    return jsonResponse({ mutations: rows, retention: { maxRows } });
+    const response = jsonResponse({ mutations: rows, retention: { maxRows } });
+    const headers = new Headers(response.headers);
+    headers.set("Cache-Control", "no-store");
+    return new Response(response.body, { status: response.status, headers });
   }
 
   if (url.pathname === "/api/settings" && req.method === "GET") {

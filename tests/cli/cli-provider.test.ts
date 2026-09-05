@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Database } from "bun:sqlite";
+import { restoreCommandDetail } from "../../src/cli/dispatch";
 import { SPAWN_BUDGET_MS } from "../helpers/test-budget";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
 
@@ -15,6 +16,12 @@ const isolatedCodexHome = mkdtempSync(join(tmpdir(), "ocx-prov-codex-home-"));
 // Every case below spawns the real CLI. Cold Bun starts on a loaded windows-latest runner
 // routinely blow the 5s default before --help returns; the spawn IS the assertion.
 setDefaultTimeout(SPAWN_BUDGET_MS);
+
+test("restore runner provenance distinguishes eject from restore", () => {
+  expect(restoreCommandDetail("eject")).toBe("ocx eject");
+  expect(restoreCommandDetail("restore")).toBe("ocx restore");
+  expect(restoreCommandDetail(undefined)).toBe("ocx restore");
+});
 
 function runCli(args: string[], env: Record<string, string> = {}) {
   return spawnSync(process.execPath, [cliPath, ...args], {

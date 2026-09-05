@@ -12,6 +12,7 @@ import {
   setConfigAtomicWriteFailureForTests,
   setConfigRecoveryMarkerUnlinkFailureForTests,
   setConfigPostWriteFailureForTests,
+  withConfigMutationLockSync,
 } from "../src/config";
 import {
   buildConfigMutationSnapshot,
@@ -106,6 +107,20 @@ describe("config mutation audit log", () => {
     expect(rows[1].surface).toBe("api");
     expect(rows[1].detail).toBe("api-keys: add provider key");
     expect(JSON.stringify(rows[1].after)).not.toContain("sk-second-key");
+  });
+
+  test("nested changed saves remove every pending marker after commit", () => {
+    withConfigMutationLockSync(() => {
+      const first = configWithProvider(10100);
+      first.managementUsageMaxReadBytes = 111;
+      saveConfig(first, { surface: "internal", detail: "nested first" });
+      const second = configWithProvider(10200);
+      second.managementUsageMaxReadBytes = 222;
+      saveConfig(second, { surface: "internal", detail: "nested second" });
+    });
+    const { rows } = readConfigMutationAudit();
+    expect(rows.map(row => row.detail)).toEqual(["nested second", "nested first"]);
+    expect(listPendingConfigMutationAuditPaths(testRoot)).toEqual([]);
   });
 
   test("storage cleanup policy writes record api surface and operation detail", () => {
@@ -1093,6 +1108,7 @@ describe("config mutation audit management API", () => {
       "admin-token",
     );
     expect(response).not.toBeNull();
+    expect(response!.headers.get("Cache-Control")).toBe("no-store");
     const body = await response!.json() as { mutations: Array<{ detail: string }>; retention: { maxRows: number } };
     expect(body.mutations).toHaveLength(1);
     expect(body.mutations[0].detail).toBe("PUT /api/test");
@@ -1109,6 +1125,7 @@ describe("config mutation audit management API", () => {
     expect(capability?.status).toBe(403);
     const admin = await handleManagementAPI(request(), url, loadConfig(), {}, "admin-token");
     expect(admin?.status).toBe(200);
+    expect(admin?.headers.get("Cache-Control")).toBe("no-store");
   });
 
   // The route's best-effort agent-def sync performs a real provider model discovery after
