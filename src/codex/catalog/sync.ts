@@ -16,7 +16,8 @@ import { CODEX_REASONING_LEVELS, codexEffortRank, configuredReasoningEfforts, mo
 import { getModelMetadata, getModelMetadataCaseInsensitive, listModelMetadata, resolveMetadataProvider } from "../../generated/model-metadata";
 import { enrichProviderFromRegistry, shouldCaseFoldMetadataModelId } from "../../providers/derive";
 import { applyProviderContextCap, providerContextCap } from "../../providers/context-cap";
-import { routedSlug, slugEquals, slugEquivalenceKey, slugsEquivalent } from "../../providers/slug-codec";
+import { encodeRoutedModelId, routedSlug, slugEquals, slugEquivalenceKey, slugsEquivalent } from "../../providers/slug-codec";
+import { canonicalAutoReviewModelKey, isValidAutoReviewModel as isValidAutoReviewTarget } from "../../config/provider-validation";
 import { identifyRoutedModel } from "../../adapters/identity";
 import { filterCursorConfiguredModelsByLiveDiscovery } from "../../adapters/cursor/discovery";
 import { fetchCursorUsableModels } from "../../adapters/cursor/live-models";
@@ -1586,14 +1587,11 @@ function catalogModelsForMergeWithNativeRecovery(
   ]);
 }
 
-const AUTO_REVIEW_MODEL_CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\s]/;
+const AUTO_REVIEW_ROOT_MARKER = "opencodex_auto_review_root";
 
+/** True when the value is a valid Codex catalog auto-review selector. */
 export function isValidAutoReviewModel(value: unknown): value is string {
-  if (typeof value !== "string") return false;
-  const trimmed = value.trim();
-  return Boolean(trimmed)
-    && trimmed.length <= 1024
-    && !AUTO_REVIEW_MODEL_CONTROL_CHARS.test(trimmed);
+  return isValidAutoReviewTarget(value);
 }
 
 export type AutoReviewModelOverrideResult = "absent" | "applied" | "invalid" | "unresolved";
@@ -1602,6 +1600,12 @@ function isRoutedCatalogEntry(entry: RawEntry): boolean {
   const slug = typeof entry.slug === "string" ? entry.slug : "";
   return slug.includes("/")
     || (typeof entry.description === "string" && entry.description.startsWith("Routed via opencodex → "));
+}
+
+/** Remove an override and its root-derived provenance marker from one catalog row. */
+function clearAutoReviewOverrideValue(entry: RawEntry): void {
+  entry.auto_review_model_override = null;
+  delete entry[AUTO_REVIEW_ROOT_MARKER];
 }
 
 function clearAutoReviewModelOverride(
@@ -1631,12 +1635,14 @@ function clearAutoReviewModelOverride(
     if (!entry || typeof entry !== "object") continue;
     const current = entry.auto_review_model_override;
     if (isRoutedCatalogEntry(entry)
+      || entry[AUTO_REVIEW_ROOT_MARKER] === true
       || (globalStamp && typeof current === "string" && configuredValues.has(current))) {
-      entry.auto_review_model_override = null;
+      clearAutoReviewOverrideValue(entry);
     }
   }
 }
 
+/** Warn once about a malformed or unresolvable root auto-review selector. */
 function warnAutoReviewModelDiagnostic(
   reason: "invalid" | "unresolved",
   configured: string,
@@ -1650,22 +1656,56 @@ function warnAutoReviewModelDiagnostic(
   );
 }
 
+/** Warn once about a malformed or unresolvable provider-scoped auto-review selector. */
+function warnProviderAutoReviewModelDiagnostic(
+  reason: "invalid" | "unresolved",
+  provider: string,
+  configured: string,
+): void {
+  const safeProvider = JSON.stringify(redactSecretString(provider));
+  const safeConfigured = JSON.stringify(redactSecretString(configured));
+  const detail = reason === "unresolved"
+    ? "the selector was not found in the final catalog"
+    : "the selector format is invalid";
+  console.warn(
+    `[opencodex] auto_review_model for provider ${safeProvider} ${detail} (${safeConfigured}); preserving normal upstream auto-review behavior.`,
+  );
+}
+
+/** Preserve native upstream overrides and the root-derived provenance marker from source rows. */
 function preserveNativeAutoReviewModelOverrides(
   models: readonly RawEntry[],
   sourceModels: readonly RawEntry[],
 ): void {
-  const existing = new Map<string, string | null>();
+  const existing = new Map<string, { value: string | null; root: boolean }>();
   for (const entry of sourceModels) {
     const slug = typeof entry.slug === "string" ? entry.slug : undefined;
     const value = entry.auto_review_model_override;
     if (!slug || isRoutedCatalogEntry(entry)) continue;
-    if (typeof value === "string" || value === null) existing.set(slug, value);
+    if (typeof value === "string" || value === null) {
+      existing.set(slug, { value, root: entry[AUTO_REVIEW_ROOT_MARKER] === true });
+    }
   }
   for (const entry of models) {
     const slug = typeof entry.slug === "string" ? entry.slug : undefined;
     if (!slug || isRoutedCatalogEntry(entry) || !existing.has(slug)) continue;
-    entry.auto_review_model_override = existing.get(slug) ?? null;
+    const saved = existing.get(slug)!;
+    entry.auto_review_model_override = saved.value;
+    if (saved.root) entry[AUTO_REVIEW_ROOT_MARKER] = true;
+    else delete entry[AUTO_REVIEW_ROOT_MARKER];
   }
+}
+
+/** Stamp a root-derived override and mark native rows so later root removal is durable. */
+function stampRootAutoReviewOverride(entry: RawEntry, target: string): void {
+  entry.auto_review_model_override = target;
+  if (!isRoutedCatalogEntry(entry)) entry[AUTO_REVIEW_ROOT_MARKER] = true;
+}
+
+/** Stamp a provider-derived override; provider stamps never fall under root removal. */
+function stampProviderAutoReviewOverride(entry: RawEntry, target: string): void {
+  entry.auto_review_model_override = target;
+  delete entry[AUTO_REVIEW_ROOT_MARKER];
 }
 
 export function applyAutoReviewModelOverride(
@@ -1695,21 +1735,207 @@ export function applyAutoReviewModelOverride(
   }
   for (const entry of models) {
     if (entry && typeof entry === "object") {
-      entry.auto_review_model_override = trimmed;
+      stampRootAutoReviewOverride(entry, trimmed);
     }
   }
   return "applied";
+}
+
+/** Validated provider-scoped target with both the configured spelling and catalog slug. */
+interface ValidProviderReviewTarget {
+  configured: string;
+  target: string;
+}
+
+/** One provider's resolved provider-wide and per-model auto-review targets. */
+interface ProviderReviewPlan {
+  wide?: ValidProviderReviewTarget;
+  perModel: Map<string, ValidProviderReviewTarget>;
+}
+
+/** Public provider namespace of a routed catalog row, when it has one. */
+function catalogEntryProviderName(entry: RawEntry): string | undefined {
+  const slug = typeof entry.slug === "string" ? entry.slug : "";
+  const slash = slug.indexOf("/");
+  return slash > 0 && isRoutedCatalogEntry(entry) ? slug.slice(0, slash) : undefined;
+}
+
+/** Encoded model-id segment of a routed catalog row, when it has one. */
+function catalogEntryModelSegment(entry: RawEntry): string | undefined {
+  const slug = typeof entry.slug === "string" ? entry.slug : "";
+  const slash = slug.indexOf("/");
+  return slash > 0 ? slug.slice(slash + 1) : undefined;
+}
+
+/** Case-insensitive encoded key used to match per-model override maps. */
+function providerModelKey(modelId: string): string {
+  return canonicalAutoReviewModelKey(modelId);
+}
+
+/** Resolve one configured target against the assembled catalog; bare values name a model of the same provider. */
+function resolveProviderReviewTarget(
+  models: readonly RawEntry[],
+  provider: string,
+  configuredRaw: unknown,
+): { kind: "valid"; value: ValidProviderReviewTarget } | { kind: "invalid"; configured: string } | { kind: "unresolved"; configured: string } | { kind: "absent" } {
+  if (typeof configuredRaw !== "string") return { kind: "absent" };
+  const configured = configuredRaw.trim();
+  if (!configured) return { kind: "absent" };
+  if (!isValidAutoReviewModel(configured)) return { kind: "invalid", configured };
+  const prefix = `${provider}/`;
+  let match: RawEntry | undefined;
+  const sameProviderCandidate = (rawModelId: string): RawEntry | undefined => models.find(entry => {
+    if (!isRoutedCatalogEntry(entry) || typeof entry.slug !== "string" || !entry.slug.startsWith(prefix)) return false;
+    const segment = catalogEntryModelSegment(entry);
+    return segment !== undefined && segment === encodeRoutedModelId(rawModelId);
+  });
+  // A bare selector names a model of this provider. A full selector that resolves in the
+  // assembled catalog already names the exact row, including a same-provider encoded slug.
+  if (!configured.includes("/")) {
+    match = sameProviderCandidate(configured);
+  }
+  match ??= configuredCatalogEntry(models, configured);
+  if (!match && configured.startsWith(prefix)) {
+    match = sameProviderCandidate(configured.slice(prefix.length));
+  }
+  if (!match) {
+    // A raw model id may itself contain "/" (for example zenmux moonshotai/kimi-k3).
+    // After the full-selector lookup misses, try that spelling as a same-provider id.
+    match = sameProviderCandidate(configured);
+  }
+  if (!match) return { kind: "unresolved", configured };
+  const target = typeof match.slug === "string" ? match.slug : configured;
+  return { kind: "valid", value: { configured, target } };
+}
+
+/** Build resolved per-provider plans and emit one diagnostic per bad selector. */
+function buildProviderReviewPlans(
+  models: readonly RawEntry[],
+  config: Pick<OcxConfig, "providers">,
+): { plans: Map<string, ProviderReviewPlan>; failure?: "invalid" | "unresolved" } {
+  const plans = new Map<string, ProviderReviewPlan>();
+  let failure: "invalid" | "unresolved" | undefined;
+  const warned = new Set<string>();
+  const recordFailure = (kind: "invalid" | "unresolved", provider: string, configured: string): void => {
+    const signature = `${provider}\u0000${configured}`;
+    if (warned.has(signature)) return;
+    warned.add(signature);
+    warnProviderAutoReviewModelDiagnostic(kind, provider, configured);
+    failure ??= kind;
+  };
+  for (const [name, provider] of Object.entries(config.providers ?? {})) {
+    if (provider.autoReviewModel === undefined && provider.autoReviewModelOverrides === undefined) continue;
+    const plan: ProviderReviewPlan = { perModel: new Map() };
+    if (provider.autoReviewModel !== undefined) {
+      const resolved = resolveProviderReviewTarget(models, name, provider.autoReviewModel);
+      if (resolved.kind === "valid") plan.wide = resolved.value;
+      else if (resolved.kind !== "absent") recordFailure(resolved.kind, name, resolved.configured);
+    }
+    if (provider.autoReviewModelOverrides !== undefined) {
+      for (const [modelId, rawTarget] of Object.entries(provider.autoReviewModelOverrides)) {
+        const resolved = resolveProviderReviewTarget(models, name, rawTarget);
+        if (resolved.kind === "valid") {
+          plan.perModel.set(providerModelKey(modelId), resolved.value);
+        } else if (resolved.kind !== "absent") {
+          recordFailure(resolved.kind, name, resolved.configured);
+        }
+      }
+    }
+    if (plan.wide !== undefined || plan.perModel.size > 0) plans.set(name, plan);
+  }
+  return { plans, failure };
+}
+
+/** Apply or clear the root selector only on rows without a provider stamp. */
+function applyRootSelectorToRemaining(
+  models: readonly RawEntry[],
+  rootValue: string | null | undefined,
+  providerStamped: ReadonlySet<RawEntry>,
+): AutoReviewModelOverrideResult {
+  const clearRemaining = (): void => {
+    for (const entry of models) {
+      if (!entry || providerStamped.has(entry)) continue;
+      // Native rows written by releases before the root marker cannot be told apart from
+      // upstream values once provider stamps diverge. The no-provider path keeps the legacy
+      // whole-catalog heuristic; provider-scoped configurations restamp native rows whenever a
+      // root selector is present, so only a simultaneous upgrade-plus-removal needs a manual sync.
+      if (isRoutedCatalogEntry(entry) || entry[AUTO_REVIEW_ROOT_MARKER] === true) clearAutoReviewOverrideValue(entry);
+    }
+  };
+  if (rootValue === null || rootValue === undefined) {
+    clearRemaining();
+    return "absent";
+  }
+  const trimmed = rootValue.trim();
+  if (!trimmed) {
+    clearRemaining();
+    return "absent";
+  }
+  if (!isValidAutoReviewModel(trimmed)) {
+    clearRemaining();
+    warnAutoReviewModelDiagnostic("invalid", trimmed);
+    return "invalid";
+  }
+  if (!configuredCatalogEntry(models, trimmed)) {
+    clearRemaining();
+    warnAutoReviewModelDiagnostic("unresolved", trimmed);
+    return "unresolved";
+  }
+  for (const entry of models) {
+    if (!entry || providerStamped.has(entry)) continue;
+    stampRootAutoReviewOverride(entry, trimmed);
+  }
+  return "applied";
+}
+
+/** Provider-aware variant: provider rows win and the root selector is the fallback. */
+export function applyConfiguredAutoReviewModelOverride(
+  models: RawEntry[] | undefined,
+  rootAutoReviewModel: string | null | undefined,
+  config: Pick<OcxConfig, "providers">,
+): AutoReviewModelOverrideResult {
+  if (!models || !Array.isArray(models)) return "absent";
+  const { plans, failure } = buildProviderReviewPlans(models, config);
+  const providerStamped = new Set<RawEntry>();
+  for (const entry of models) {
+    if (!entry || typeof entry !== "object") continue;
+    const provider = catalogEntryProviderName(entry);
+    if (!provider) continue;
+    const plan = plans.get(provider);
+    if (!plan) continue;
+    const modelSegment = catalogEntryModelSegment(entry);
+    const perModel = modelSegment === undefined ? undefined : plan.perModel.get(providerModelKey(modelSegment));
+    const selected = perModel ?? plan.wide;
+    if (selected) stampProviderAutoReviewOverride(entry, selected.target);
+    if (selected || (perModel !== undefined)) providerStamped.add(entry);
+  }
+  const rootResult = applyRootSelectorToRemaining(models, rootAutoReviewModel, providerStamped);
+  const providerApplied = [...providerStamped].some(entry => typeof entry.auto_review_model_override === "string");
+  if (providerApplied) {
+    if (rootResult === "invalid" || rootResult === "unresolved") return rootResult;
+    return failure ?? "applied";
+  }
+  return failure ?? rootResult;
+}
+
+/** True when any provider row configures a provider-scoped auto-review selector. */
+function configHasProviderAutoReview(config: Pick<OcxConfig, "providers">): boolean {
+  return Object.values(config.providers ?? {}).some(provider =>
+    provider.autoReviewModel !== undefined || provider.autoReviewModelOverrides !== undefined);
 }
 
 /** Apply the root Codex auto-review selector after the final catalog merge. */
 export function finalizeAutoReviewModelOverride(
   models: RawEntry[] | undefined,
   sourceModels: readonly RawEntry[] = [],
+  config?: Pick<OcxConfig, "providers">,
 ): AutoReviewModelOverrideResult {
   if (models && sourceModels.length > 0) preserveNativeAutoReviewModelOverrides(models, sourceModels);
+  if (config && configHasProviderAutoReview(config)) {
+    return applyConfiguredAutoReviewModelOverride(models, readConfiguredAutoReviewModel(), config);
+  }
   return applyAutoReviewModelOverride(models, readConfiguredAutoReviewModel(), sourceModels);
 }
-
 /**
  * Why an account-gated native model stopped being offered, but only when the answer is one the
  * operator can act on.
@@ -2028,7 +2254,7 @@ function writeRetainedCatalogSync({
     },
   });
   clampCatalogModelsToCodexSupport(catalog.models);
-  finalizeAutoReviewModelOverride(catalog.models, catalogModelsForMerge);
+  finalizeAutoReviewModelOverride(catalog.models, catalogModelsForMerge, config);
 
   const added = goEntries.length + accountBoundEntries.length;
   const content = `${JSON.stringify(catalog, null, 2)}\n`;

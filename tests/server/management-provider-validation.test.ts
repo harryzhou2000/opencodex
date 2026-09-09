@@ -30,7 +30,11 @@ import {
 } from "../../src/server";
 import { handleManagementAPI } from "../../src/server/management-api";
 import { providerEditorConfigDTO, providerManagementConfigError } from "../../src/server/auth-cors";
-import { providerEmptyToolOutputConfigError } from "../../src/config/provider-validation";
+import {
+  autoReviewModelOverridesConfigError,
+  autoReviewModelTargetConfigError,
+  providerEmptyToolOutputConfigError,
+} from "../../src/config/provider-validation";
 import { providerServiceTierConfigError, withProviderServiceTierDTO } from "../../src/server/management/provider-capability-config";
 import { clearModelCache, markProviderDiscoveryFailed, markProviderDiscoveryOk } from "../../src/codex/model-cache";
 import {
@@ -672,6 +676,151 @@ describe("provider management validation", () => {
       expect(loadConfig().providers.relay).not.toHaveProperty("annotateEmptyToolOutputs");
     } finally {
       await server.stop(true);
+    }
+  });
+
+  test("provider management validates and patches auto-review selectors", async () => {
+    expect(autoReviewModelTargetConfigError("  opencode-go/deepseek-v4-flash  ")).toBeNull();
+    expect(autoReviewModelTargetConfigError("bad slug")).toContain("autoReviewModel");
+    expect(autoReviewModelOverridesConfigError({ " model": "gpt-test" })).toContain("keys");
+
+    if (existsSync(TEST_DIR)) removeTreeWithRetry(TEST_DIR);
+    mkdirSync(TEST_DIR, { recursive: true });
+    process.env.OPENCODEX_HOME = TEST_DIR;
+    const liveConfig: OcxConfig = {
+      port: 0,
+      hostname: "127.0.0.1",
+      defaultProvider: "relay",
+      providers: {
+        relay: { adapter: "openai-chat", baseUrl: "https://relay.example/v1" },
+      },
+    };
+    saveConfig(liveConfig);
+    const request = async (path: string, init?: RequestInit) => {
+      const req = new Request(`http://127.0.0.1${path}`, init);
+      return handleManagementAPI(req, new URL(req.url), liveConfig, {
+        createManagementConvergeCodex: catalogConvergenceFactory(),
+      });
+    };
+
+    const reject = await request("/api/providers?name=relay", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ autoReviewModelOverrides: { "glm-5.2": "bad target" } }),
+    });
+    expect(reject?.status).toBe(400);
+    expect(await reject?.json()).toMatchObject({ error: expect.stringContaining("autoReviewModelOverrides") });
+
+    const set = await request("/api/providers?name=relay", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        autoReviewModel: "openai/gpt-test",
+        autoReviewModelOverrides: { "glm-5.2": "gpt-test" },
+      }),
+    });
+    expect(set?.status).toBe(200);
+    expect(liveConfig.providers.relay?.autoReviewModel).toBe("openai/gpt-test");
+    expect(liveConfig.providers.relay?.autoReviewModelOverrides).toEqual({ "glm-5.2": "gpt-test" });
+    expect(loadConfig().providers.relay?.autoReviewModelOverrides).toEqual({ "glm-5.2": "gpt-test" });
+
+    const update = await request("/api/providers?name=relay", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ autoReviewModelOverrides: { "GLM-5.2": "gpt-5.6-terra" } }),
+    });
+    expect(update?.status).toBe(200);
+    expect(liveConfig.providers.relay?.autoReviewModelOverrides).toEqual({ "GLM-5.2": "gpt-5.6-terra" });
+
+    const remove = await request("/api/providers?name=relay", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ autoReviewModelOverrides: { "glm-5.2": null } }),
+    });
+    expect(remove?.status).toBe(200);
+    expect(liveConfig.providers.relay?.autoReviewModelOverrides).toBeUndefined();
+
+    const clear = await request("/api/providers?name=relay", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ autoReviewModel: null, autoReviewModelOverrides: null }),
+    });
+    expect(clear?.status).toBe(200);
+    expect(liveConfig.providers.relay).not.toHaveProperty("autoReviewModel");
+    expect(liveConfig.providers.relay).not.toHaveProperty("autoReviewModelOverrides");
+  });
+
+  test("canonical openai provider rejects auto-review fields", async () => {
+    expect(providerManagementConfigError("openai", {
+      ...canonicalDirect,
+      codexAccountMode: "pool",
+      autoReviewModel: "gpt-test",
+    })).toContain("autoReviewModel");
+  });
+
+  test("provider POST overwrite preserves auto-review selectors when omitted", async () => {
+    if (existsSync(TEST_DIR)) removeTreeWithRetry(TEST_DIR);
+    mkdirSync(TEST_DIR, { recursive: true });
+    process.env.OPENCODEX_HOME = TEST_DIR;
+    const liveConfig: OcxConfig = {
+      port: 0,
+      hostname: "127.0.0.1",
+      defaultProvider: "relay",
+      providers: {
+        relay: {
+          adapter: "openai-chat",
+          baseUrl: "https://relay.example/v1",
+          autoReviewModel: "openai/gpt-test",
+          autoReviewModelOverrides: { "glm-5.2": "gpt-test" },
+        },
+      },
+    };
+    saveConfig(liveConfig);
+    const resolvedError = spyOn(destinationPolicy, "providerDestinationResolvedError").mockResolvedValue(null);
+    try {
+      const req = new Request("http://127.0.0.1/api/providers", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: "relay",
+          provider: { adapter: "openai-chat", baseUrl: "https://relay.example/v1" },
+        }),
+      });
+      const response = await handleManagementAPI(
+        req,
+        new URL(req.url),
+        liveConfig,
+        { createManagementConvergeCodex: catalogConvergenceFactory() },
+      );
+      expect(response?.status).toBe(200);
+      expect(liveConfig.providers.relay?.autoReviewModel).toBe("openai/gpt-test");
+      expect(liveConfig.providers.relay?.autoReviewModelOverrides).toEqual({ "glm-5.2": "gpt-test" });
+      expect(loadConfig().providers.relay?.autoReviewModelOverrides).toEqual({ "glm-5.2": "gpt-test" });
+
+      const blankReq = new Request("http://127.0.0.1/api/providers", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: "relay",
+          provider: {
+            adapter: "openai-chat",
+            baseUrl: "https://relay.example/v1",
+            autoReviewModel: "",
+            autoReviewModelOverrides: {},
+          },
+        }),
+      });
+      const blankResponse = await handleManagementAPI(
+        blankReq,
+        new URL(blankReq.url),
+        liveConfig,
+        { createManagementConvergeCodex: catalogConvergenceFactory() },
+      );
+      expect(blankResponse?.status).toBe(200);
+      expect(liveConfig.providers.relay).not.toHaveProperty("autoReviewModel");
+      expect(liveConfig.providers.relay).not.toHaveProperty("autoReviewModelOverrides");
+    } finally {
+      resolvedError.mockRestore();
     }
   });
 

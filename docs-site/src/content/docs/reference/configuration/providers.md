@@ -260,6 +260,46 @@ use `null` to clear a scalar or the whole map. A map entry set to `null` or `""`
 entry while preserving other entries. Malformed writes are rejected before saving. A malformed
 optional pin in a hand-edited file is ignored on load without discarding the rest of the config.
 
+### Auto-review (approval) model selection
+
+Codex reads `auto_review_model_override` from the catalog row of the current turn's model to
+choose the model that reviews approval requests. The root `auto_review_model` setting in
+`$CODEX_HOME/config.toml` applies one reviewer to every catalog row. When different routed
+providers should use different (usually cheaper) reviewers, add provider-scoped selectors to the
+provider row in `config.json` instead:
+
+```json
+{
+  "providers": {
+    "blsc": {
+      "adapter": "openai-chat",
+      "baseUrl": "https://llmapi.blsc.cn",
+      "autoReviewModel": "opencode-go/deepseek-v4-flash",
+      "autoReviewModelOverrides": {
+        "kimi-k3": "gpt-5.6-terra"
+      }
+    }
+  }
+}
+```
+
+`autoReviewModel` is the provider-wide target. A value can be a bare model id of that same
+provider (the catalog row is normalized to the `provider/model` slug) or a full public catalog
+slug such as `opencode-go/deepseek-v4-flash`. `autoReviewModelOverrides` keys are exact upstream
+model ids of that provider; an entry wins over the provider-wide value for its model. A provider
+stamp wins over the root selector on its own routed rows, and the root selector remains the
+fallback for native rows and routed rows without a provider stamp. Removing a provider selector
+clears only that provider's stamps; removing the root selector never clears provider stamps.
+Model ids that contain a slash may be written raw or in their encoded catalog form; both
+spellings resolve to the same routed row.
+Selectors are resolved against the final catalog on each sync: an unknown target fails closed
+for the override only, emits a diagnostic, and leaves normal upstream auto-review behavior in
+place. The canonical `openai` provider does not accept these fields.
+
+`PATCH /api/providers?name=<provider>` accepts both fields. Use `null` to clear the scalar or
+the whole map; use a map entry of `null` or `""` to remove that model while preserving other
+entries. Unrelated provider saves preserve previously configured values.
+
 ### Discovered model display names
 
 Use `modelDisplayNames` when a provider returns machine friendly ids but the Codex model picker
@@ -328,6 +368,7 @@ projection, and merge precedence, so only a selector present in the catalog prod
 that sync can become an override. Native upstream values are preserved when the setting is
 cleared or unresolved. The persisted catalog field is read by Codex for the current turn's
 model, which is why a valid configured selector is copied to each applicable entry.
+Provider-scoped selectors (above) are applied before this root fallback and win on routed rows.
 
 ### FastWire B1 capability migration
 
