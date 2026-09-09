@@ -133,7 +133,7 @@ function UsageListPrice({ row, locale, t }: { row: UsageCostRow; locale: Locale;
   if (!hasPriceData) return <span className="muted">—</span>;
 
   const excludedRequests = row.unpricedRequests ?? 0;
-  if (row.estimatedCostUsd === undefined && excludedRequests > 0) {
+  if (row.estimatedCostUsd === undefined) {
     return (
       <>
         <span className="muted">—</span>
@@ -577,6 +577,7 @@ function UsageModelsTable({
   const searchLabel = t("usage.search.models");
   const sectionLabel = t("usage.section.models");
   const titleId = "usage-models-title";
+  const listPriceDisclaimerId = "usage-models-list-price-disclaimer";
   const searchInput = (
     <input
       className="input"
@@ -596,7 +597,7 @@ function UsageModelsTable({
             <th className="num">{t("usage.col.requests")}</th>
             <th className="num">{t("usage.col.measured")}</th>
             <th className="num">{t("usage.col.tokens")}</th>
-            <th className="num" title={t("usage.cost.disclaimer")}>{t("usage.col.apiListPrice")}</th>
+            <th className="num" aria-describedby={listPriceDisclaimerId}>{t("usage.col.apiListPrice")}</th>
             <th>{t("usage.col.share")}</th>
           </tr>
         </thead>
@@ -614,6 +615,7 @@ function UsageModelsTable({
           ))}
         </tbody>
       </table>
+      <p id={listPriceDisclaimerId} className="muted text-caption">{t("usage.cost.disclaimer")}</p>
     </div>
   );
 
@@ -650,6 +652,7 @@ function UsageProvidersTable({
 }) {
   const sectionLabel = t("usage.section.providers");
   const titleId = "usage-providers-title";
+  const listPriceDisclaimerId = "usage-providers-list-price-disclaimer";
   const table = (
     <div className="tbl-wrap">
       <table className="tbl">
@@ -659,7 +662,7 @@ function UsageProvidersTable({
             <th className="num">{t("usage.col.requests")}</th>
             <th className="num">{t("usage.col.measured")}</th>
             <th className="num">{t("usage.col.tokens")}</th>
-            <th className="num" title={t("usage.cost.disclaimer")}>{t("usage.col.apiListPrice")}</th>
+            <th className="num" aria-describedby={listPriceDisclaimerId}>{t("usage.col.apiListPrice")}</th>
             <th>{t("usage.col.share")}</th>
           </tr>
         </thead>
@@ -676,6 +679,7 @@ function UsageProvidersTable({
           ))}
         </tbody>
       </table>
+      <p id={listPriceDisclaimerId} className="muted text-caption">{t("usage.cost.disclaimer")}</p>
     </div>
   );
 
