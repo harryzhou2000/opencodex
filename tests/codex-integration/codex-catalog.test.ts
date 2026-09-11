@@ -7564,6 +7564,32 @@ describe("provider-level auto_review_model overrides", () => {
       .toBe("opencode-go/deepseek-v4-flash");
     expect(models.some(row => row.auto_review_model_override === "legacy-root")).toBe(false);
   });
+
+  test("a bare target that resolves outside the provider is used but reported", () => {
+    const models = entries();
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const result = applyConfiguredAutoReviewModelOverride(models, null, config({ autoReviewModel: "gpt-5.6-terra" }));
+      expect(result).toBe("applied");
+      expect(models.find(row => row.slug === "blsc/glm-5.2")?.auto_review_model_override).toBe("gpt-5.6-terra");
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]?.[0])).toContain("auto_review_model for provider \"blsc\"");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("a bare target that resolves inside the provider stays silent", () => {
+    const models = entries();
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const result = applyConfiguredAutoReviewModelOverride(models, null, config({ autoReviewModel: "glm-5.2" }));
+      expect(result).toBe("applied");
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
 });
 
 import { ManagementRequest as Request } from "../helpers/management-auth";

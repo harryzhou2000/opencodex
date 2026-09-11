@@ -1025,8 +1025,9 @@ root selector on its own rows while the root selector stays the fallback elsewhe
 
 A bare value resolves against the provider's own rows first and then against a bare catalog row,
 which is how a native model such as `gpt-5.6-terra` is named; a value that matches neither is left
-unresolved. Giving the full slug avoids the question entirely when the reviewer is another provider's
-routed model.
+unresolved, and a bare value that lands outside the provider prints a note naming the row that
+supplies the reviewer. Giving the full slug avoids the question entirely when the reviewer is
+another provider's routed model.
 
 Selectors are resolved against the final catalog on the next sync. An unknown target fails closed:
 that override is skipped, a diagnostic is printed, and normal upstream auto-review behavior stays

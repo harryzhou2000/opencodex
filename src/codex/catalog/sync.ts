@@ -1704,6 +1704,21 @@ function warnProviderAutoReviewModelDiagnostic(
   );
 }
 
+/**
+ * Note once when a bare selector resolves to a row outside the provider it was configured on.
+ *
+ * That is how a native model is named as a reviewer, so it stays usable, but a mistyped target must
+ * not be silent: the operator sees which catalog row actually supplies the reviewer.
+ */
+function warnProviderAutoReviewForeignTarget(provider: string, configured: string, target: string): void {
+  const safeProvider = JSON.stringify(redactSecretString(provider));
+  const safeConfigured = JSON.stringify(redactSecretString(configured));
+  const safeTarget = JSON.stringify(redactSecretString(target));
+  console.warn(
+    `[opencodex] auto_review_model for provider ${safeProvider} (${safeConfigured}) resolved to ${safeTarget}, which is not a row of that provider; that catalog row supplies the reviewer.`,
+  );
+}
+
 /** Preserve native upstream overrides and the root-derived provenance marker from source rows. */
 function preserveNativeAutoReviewModelOverrides(
   models: readonly RawEntry[],
@@ -1813,7 +1828,7 @@ function resolveProviderReviewTarget(
   models: readonly RawEntry[],
   provider: string,
   configuredRaw: unknown,
-): { kind: "valid"; value: ValidProviderReviewTarget } | { kind: "invalid"; configured: string } | { kind: "unresolved"; configured: string } | { kind: "absent" } {
+): { kind: "valid"; value: ValidProviderReviewTarget; foreign?: boolean } | { kind: "invalid"; configured: string } | { kind: "unresolved"; configured: string } | { kind: "absent" } {
   if (typeof configuredRaw !== "string") return { kind: "absent" };
   const configured = configuredRaw.trim();
   if (!configured) return { kind: "absent" };
@@ -1841,7 +1856,10 @@ function resolveProviderReviewTarget(
   }
   if (!match) return { kind: "unresolved", configured };
   const target = typeof match.slug === "string" ? match.slug : configured;
-  return { kind: "valid", value: { configured, target } };
+  // A qualified selector may name another provider's row on purpose; only a bare value that lands
+  // outside this provider is worth reporting.
+  const foreign = !configured.includes("/") && catalogEntryProviderName(match) !== provider;
+  return { kind: "valid", value: { configured, target }, ...(foreign ? { foreign: true } : {}) };
 }
 
 /** Build resolved per-provider plans and emit one diagnostic per bad selector. */
@@ -1859,12 +1877,21 @@ function buildProviderReviewPlans(
     warnProviderAutoReviewModelDiagnostic(kind, provider, configured);
     failure ??= kind;
   };
+  const recordForeignTarget = (provider: string, configured: string, target: string): void => {
+    const signature = `${provider}\u0000foreign\u0000${configured}`;
+    if (warned.has(signature)) return;
+    warned.add(signature);
+    warnProviderAutoReviewForeignTarget(provider, configured, target);
+  };
   for (const [name, provider] of Object.entries(config.providers ?? {})) {
     if (provider.autoReviewModel === undefined && provider.autoReviewModelOverrides === undefined) continue;
     const plan: ProviderReviewPlan = { perModel: new Map() };
     if (provider.autoReviewModel !== undefined) {
       const resolved = resolveProviderReviewTarget(models, name, provider.autoReviewModel);
-      if (resolved.kind === "valid") plan.wide = resolved.value;
+      if (resolved.kind === "valid") {
+        plan.wide = resolved.value;
+        if (resolved.foreign) recordForeignTarget(name, resolved.value.configured, resolved.value.target);
+      }
       else if (resolved.kind !== "absent") recordFailure(resolved.kind, name, resolved.configured);
     }
     if (provider.autoReviewModelOverrides !== undefined) {
@@ -1872,6 +1899,7 @@ function buildProviderReviewPlans(
         const resolved = resolveProviderReviewTarget(models, name, rawTarget);
         if (resolved.kind === "valid") {
           plan.perModel.set(providerModelKey(modelId), resolved.value);
+          if (resolved.foreign) recordForeignTarget(name, resolved.value.configured, resolved.value.target);
         } else if (resolved.kind !== "absent") {
           recordFailure(resolved.kind, name, resolved.configured);
         }
