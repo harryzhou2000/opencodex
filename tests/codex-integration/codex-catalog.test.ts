@@ -7590,6 +7590,46 @@ describe("provider-level auto_review_model overrides", () => {
       warn.mockRestore();
     }
   });
+
+  test("an override key written as the provider alias selects the same row", () => {
+    const models: Array<Record<string, unknown>> = [
+      { slug: "gpt-5.6-terra", auto_review_model_override: null },
+      { slug: "blsc/pin-model", auto_review_model_override: null },
+      { slug: "blsc/other-model", auto_review_model_override: null },
+    ];
+    const result = applyConfiguredAutoReviewModelOverride(models, null, {
+      providers: {
+        blsc: {
+          adapter: "openai-chat",
+          baseUrl: "https://blsc.example.test/v1",
+          modelAliases: { "pin-model": "friendly" },
+          autoReviewModelOverrides: { friendly: "gpt-5.6-terra" },
+        },
+      },
+    });
+    expect(result).toBe("applied");
+    expect(models.find(row => row.slug === "blsc/pin-model")?.auto_review_model_override).toBe("gpt-5.6-terra");
+    expect(models.find(row => row.slug === "blsc/other-model")?.auto_review_model_override).toBeNull();
+  });
+
+  test("an alias does not displace an override keyed by the upstream id", () => {
+    const models: Array<Record<string, unknown>> = [
+      { slug: "gpt-5.6-terra", auto_review_model_override: null },
+      { slug: "blsc/pin-model", auto_review_model_override: null },
+    ];
+    const result = applyConfiguredAutoReviewModelOverride(models, null, {
+      providers: {
+        blsc: {
+          adapter: "openai-chat",
+          baseUrl: "https://blsc.example.test/v1",
+          modelAliases: { "pin-model": "friendly" },
+          autoReviewModelOverrides: { "pin-model": "gpt-5.6-terra" },
+        },
+      },
+    });
+    expect(result).toBe("applied");
+    expect(models.find(row => row.slug === "blsc/pin-model")?.auto_review_model_override).toBe("gpt-5.6-terra");
+  });
 });
 
 import { ManagementRequest as Request } from "../helpers/management-auth";

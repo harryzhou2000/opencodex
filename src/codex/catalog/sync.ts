@@ -1905,6 +1905,18 @@ function buildProviderReviewPlans(
         }
       }
     }
+    // `modelAliases` publishes a second public name for a model id, and a routed row's slug always
+    // carries the upstream id — so accept an override key written in either spelling.
+    for (const [modelId, alias] of Object.entries(provider.modelAliases ?? {})) {
+      if (typeof alias !== "string" || !alias.trim()) continue;
+      const idKey = providerModelKey(modelId);
+      const aliasKey = providerModelKey(alias);
+      if (idKey === aliasKey) continue;
+      const fromId = plan.perModel.get(idKey);
+      const fromAlias = plan.perModel.get(aliasKey);
+      if (fromId !== undefined && fromAlias === undefined) plan.perModel.set(aliasKey, fromId);
+      else if (fromAlias !== undefined && fromId === undefined) plan.perModel.set(idKey, fromAlias);
+    }
     if (plan.wide !== undefined || plan.perModel.size > 0) plans.set(name, plan);
   }
   return { plans, failure };

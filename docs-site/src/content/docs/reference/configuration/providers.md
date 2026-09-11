@@ -273,8 +273,10 @@ provider (the catalog row is normalized to the `provider/model` slug) or a full 
 slug such as `opencode-go/deepseek-v4-flash`. A bare value resolves against that provider's rows
 first and then against a bare catalog row, which is how a native model such as `gpt-5.6-terra` is
 named, and a bare value that lands outside the provider prints a note naming the row that actually
-supplies the reviewer; a value that matches neither is left unresolved. `autoReviewModelOverrides` keys are exact upstream
-model ids of that provider; an entry wins over the provider-wide value for its model. A provider
+supplies the reviewer; a value that matches neither is left unresolved. `autoReviewModelOverrides`
+keys are exact upstream model ids of that provider, or the provider's published alias for one
+(`modelAliases`); either spelling names the same routed row, whose slug carries the upstream id. An
+entry wins over the provider-wide value for its model. A provider
 stamp wins over the root selector on its own routed rows, and the root selector remains the
 fallback for native rows and routed rows without a provider stamp. Removing a provider selector
 clears only that provider's stamps; removing the root selector never clears provider stamps.
