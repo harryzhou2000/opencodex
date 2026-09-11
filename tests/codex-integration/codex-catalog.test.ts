@@ -7433,6 +7433,75 @@ describe("provider-level auto_review_model overrides", () => {
     expect(result).toBe("unresolved");
     expect(models.every(row => row.auto_review_model_override === null)).toBe(true);
   });
+
+  test("legacy root stamps are swept when provider configuration replaces the root in one step", () => {
+    // Catalogs written before the provenance marker carry root stamps that look exactly like
+    // upstream values, so removing the root while adding a provider selector has to fall back to
+    // the legacy whole-catalog signature — and read it before provider stamping rewrites it.
+    const sourceModels: Array<Record<string, unknown>> = [
+      { slug: "gpt-5.6-terra", auto_review_model_override: "gpt-5.6-terra" },
+      { slug: "gpt-5.5", auto_review_model_override: "gpt-5.6-terra" },
+      { slug: "blsc/glm-5.2", auto_review_model_override: "gpt-5.6-terra" },
+      { slug: "opencode-go/deepseek-v4-flash", auto_review_model_override: "gpt-5.6-terra" },
+    ];
+    const models: Array<Record<string, unknown>> = [
+      { slug: "gpt-5.6-terra", auto_review_model_override: "gpt-5.6-terra" },
+      { slug: "gpt-5.5", auto_review_model_override: "gpt-5.6-terra" },
+      { slug: "blsc/glm-5.2", auto_review_model_override: null },
+      { slug: "opencode-go/deepseek-v4-flash", auto_review_model_override: null },
+    ];
+    const result = applyConfiguredAutoReviewModelOverride(
+      models,
+      null,
+      config({ autoReviewModel: "opencode-go/deepseek-v4-flash" }),
+      sourceModels,
+    );
+    expect(result).toBe("applied");
+    expect(models.find(row => row.slug === "gpt-5.6-terra")?.auto_review_model_override).toBeNull();
+    expect(models.find(row => row.slug === "gpt-5.5")?.auto_review_model_override).toBeNull();
+    expect(models.find(row => row.slug === "blsc/glm-5.2")?.auto_review_model_override)
+      .toBe("opencode-go/deepseek-v4-flash");
+    expect(models.find(row => row.slug === "opencode-go/deepseek-v4-flash")?.auto_review_model_override).toBeNull();
+  });
+
+  test("a catalog with mixed values is not mistaken for a legacy root stamp", () => {
+    const sourceModels: Array<Record<string, unknown>> = [
+      { slug: "gpt-5.6-terra", auto_review_model_override: "native-reviewer" },
+      { slug: "blsc/glm-5.2", auto_review_model_override: "legacy-root" },
+    ];
+    const models: Array<Record<string, unknown>> = [
+      { slug: "gpt-5.6-terra", auto_review_model_override: "native-reviewer" },
+      { slug: "blsc/glm-5.2", auto_review_model_override: null },
+    ];
+    applyConfiguredAutoReviewModelOverride(
+      models,
+      null,
+      config({ autoReviewModel: "opencode-go/deepseek-v4-flash" }),
+      sourceModels,
+    );
+    expect(models.find(row => row.slug === "gpt-5.6-terra")?.auto_review_model_override)
+      .toBe("native-reviewer");
+  });
+
+  test("a uniform value no routed row carries is not treated as a legacy root stamp", () => {
+    const sourceModels: Array<Record<string, unknown>> = [
+      { slug: "gpt-5.6-terra", auto_review_model_override: "user-pinned-reviewer" },
+      { slug: "gpt-5.5", auto_review_model_override: "user-pinned-reviewer" },
+    ];
+    const models: Array<Record<string, unknown>> = [
+      { slug: "gpt-5.6-terra", auto_review_model_override: "user-pinned-reviewer" },
+      { slug: "gpt-5.5", auto_review_model_override: "user-pinned-reviewer" },
+      { slug: "blsc/glm-5.2", auto_review_model_override: null },
+    ];
+    applyConfiguredAutoReviewModelOverride(
+      models,
+      null,
+      config({ autoReviewModel: "opencode-go/deepseek-v4-flash" }),
+      sourceModels,
+    );
+    expect(models.find(row => row.slug === "gpt-5.6-terra")?.auto_review_model_override)
+      .toBe("user-pinned-reviewer");
+  });
 });
 
 import { ManagementRequest as Request } from "../helpers/management-auth";

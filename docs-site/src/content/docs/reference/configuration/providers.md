@@ -296,6 +296,12 @@ Selectors are resolved against the final catalog on each sync: an unknown target
 for the override only, emits a diagnostic, and leaves normal upstream auto-review behavior in
 place. The canonical `openai` provider does not accept these fields.
 
+Removing the root selector clears root stamps from every row, including native rows stamped by
+earlier releases that predate OpenCodex's provenance marker. That cleanup recognizes a legacy
+stamp by its shape — one value across the whole catalog that a routed row also carries — so a
+genuine per-row value matching that shape is cleared with it, and a catalog that has since
+diverged from that shape needs one manual sync. Provider stamps are never touched by root removal.
+
 `PATCH /api/providers?name=<provider>` accepts both fields. Use `null` to clear the scalar or
 the whole map; use a map entry of `null` or `""` to remove that model while preserving other
 entries. Unrelated provider saves preserve previously configured values.

@@ -1488,6 +1488,44 @@ describe("provider management validation", () => {
     }
   });
 
+  test("canonical openai PATCH rejects auto-review fields in every clear form", async () => {
+    if (existsSync(TEST_DIR)) removeTreeWithRetry(TEST_DIR);
+    mkdirSync(TEST_DIR, { recursive: true });
+    process.env.OPENCODEX_HOME = TEST_DIR;
+    saveConfig({
+      port: 0,
+      openaiProviderTierVersion: 2,
+      defaultProvider: "openai",
+      providers: { openai: { ...canonicalDirect } },
+    } as OcxConfig);
+    const server = startServer(0);
+    try {
+      const before = readFileSync(join(TEST_DIR, "config.json"));
+      // A clear or no-op value would otherwise delete the field from the merged row before the
+      // canonical-openai guard sees it, answering 200 for a field the provider may not carry.
+      for (const body of [
+        { autoReviewModel: "gpt-test" },
+        { autoReviewModel: null },
+        { autoReviewModel: "" },
+        { autoReviewModelOverrides: null },
+        { autoReviewModelOverrides: {} },
+        { autoReviewModelOverrides: { "glm-5.2": "" } },
+        { autoReviewModelOverrides: { "glm-5.2": null } },
+      ]) {
+        const response = await fetch(new URL("/api/providers?name=openai", server.url), {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        expect(response.status).toBe(400);
+        expect(await response.json()).toMatchObject({ error: expect.stringContaining("autoReviewModel") });
+      }
+      expect(readFileSync(join(TEST_DIR, "config.json"))).toEqual(before);
+    } finally {
+      await server.stop(true);
+    }
+  });
+
   test("malformed alias overlays return bounded 4xx without config persistence", async () => {
     if (existsSync(TEST_DIR)) removeTreeWithRetry(TEST_DIR);
     mkdirSync(TEST_DIR, { recursive: true });

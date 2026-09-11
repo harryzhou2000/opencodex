@@ -1608,11 +1608,13 @@ function clearAutoReviewOverrideValue(entry: RawEntry): void {
   delete entry[AUTO_REVIEW_ROOT_MARKER];
 }
 
-function clearAutoReviewModelOverride(
-  models: readonly RawEntry[],
-  sourceModels: readonly RawEntry[] = [],
-): void {
-  const observedModels = [...models, ...sourceModels];
+/**
+ * Legacy whole-catalog root stamp: releases before AUTO_REVIEW_ROOT_MARKER wrote root stamps that
+ * are textually identical to an upstream value, so the only way to recognize one is the uniform
+ * signature the no-provider path relies on — a single value that a routed row also carries.
+ * Returns the stamped values when the observed rows match that shape.
+ */
+function legacyRootStampValues(observedModels: readonly RawEntry[]): ReadonlySet<string> | undefined {
   const configuredValues = new Set(observedModels.flatMap(entry => {
     const value = entry?.auto_review_model_override;
     return typeof value === "string" && value.trim() ? [value] : [];
@@ -1631,12 +1633,37 @@ function clearAutoReviewModelOverride(
         || value === undefined
         || (typeof value === "string" && configuredValues.has(value));
     });
+  return globalStamp ? configuredValues : undefined;
+}
+
+/**
+ * Sweep legacy root stamps off the rows a provider plan is about to restamp.
+ *
+ * Root removal reaches marker-tagged native rows on its own, but a catalog written before the
+ * marker only carries the legacy signature — and provider stamping rewrites that signature before
+ * the root pass could read it, so the sweep has to run first.
+ */
+function clearLegacyRootStamps(models: readonly RawEntry[], sourceModels: readonly RawEntry[] = []): void {
+  const legacyStamp = legacyRootStampValues([...models, ...sourceModels]);
+  if (legacyStamp === undefined) return;
+  for (const entry of models) {
+    if (!entry || typeof entry !== "object") continue;
+    const current = entry.auto_review_model_override;
+    if (typeof current === "string" && legacyStamp.has(current)) clearAutoReviewOverrideValue(entry);
+  }
+}
+
+function clearAutoReviewModelOverride(
+  models: readonly RawEntry[],
+  sourceModels: readonly RawEntry[] = [],
+): void {
+  const legacyStamp = legacyRootStampValues([...models, ...sourceModels]);
   for (const entry of models) {
     if (!entry || typeof entry !== "object") continue;
     const current = entry.auto_review_model_override;
     if (isRoutedCatalogEntry(entry)
       || entry[AUTO_REVIEW_ROOT_MARKER] === true
-      || (globalStamp && typeof current === "string" && configuredValues.has(current))) {
+      || (legacyStamp !== undefined && typeof current === "string" && legacyStamp.has(current))) {
       clearAutoReviewOverrideValue(entry);
     }
   }
@@ -1855,10 +1882,10 @@ function applyRootSelectorToRemaining(
   const clearRemaining = (): void => {
     for (const entry of models) {
       if (!entry || providerStamped.has(entry)) continue;
-      // Native rows written by releases before the root marker cannot be told apart from
-      // upstream values once provider stamps diverge. The no-provider path keeps the legacy
-      // whole-catalog heuristic; provider-scoped configurations restamp native rows whenever a
-      // root selector is present, so only a simultaneous upgrade-plus-removal needs a manual sync.
+      // Native rows written by releases before the root marker cannot be told apart from upstream
+      // values once provider stamps diverge. clearLegacyRootStamps sweeps the ones the legacy
+      // uniform signature still recognizes before provider plans land, because provider stamping
+      // destroys that signature; a catalog that no longer matches it needs a one-off manual sync.
       if (isRoutedCatalogEntry(entry) || entry[AUTO_REVIEW_ROOT_MARKER] === true) clearAutoReviewOverrideValue(entry);
     }
   };
@@ -1893,8 +1920,14 @@ export function applyConfiguredAutoReviewModelOverride(
   models: RawEntry[] | undefined,
   rootAutoReviewModel: string | null | undefined,
   config: Pick<OcxConfig, "providers">,
+  sourceModels: readonly RawEntry[] = [],
 ): AutoReviewModelOverrideResult {
   if (!models || !Array.isArray(models)) return "absent";
+  // Runs unconditionally because the sweep only fires on the uniform legacy signature. A resolved
+  // root selector restamps every row it touches below, so the call is behavior-preserving there;
+  // with the root absent, invalid, or unresolved those clears are final — which is the point, and
+  // also the limit: the legacy heuristic cannot tell a root stamp from an identical upstream value.
+  clearLegacyRootStamps(models, sourceModels);
   const { plans, failure } = buildProviderReviewPlans(models, config);
   const providerStamped = new Set<RawEntry>();
   for (const entry of models) {
@@ -1933,7 +1966,7 @@ export function finalizeAutoReviewModelOverride(
 ): AutoReviewModelOverrideResult {
   if (models && sourceModels.length > 0) preserveNativeAutoReviewModelOverrides(models, sourceModels);
   if (config && configHasProviderAutoReview(config)) {
-    return applyConfiguredAutoReviewModelOverride(models, readConfiguredAutoReviewModel(), config);
+    return applyConfiguredAutoReviewModelOverride(models, readConfiguredAutoReviewModel(), config, sourceModels);
   }
   return applyAutoReviewModelOverride(models, readConfiguredAutoReviewModel(), sourceModels);
 }
