@@ -300,6 +300,10 @@ place. The canonical `openai` provider does not accept these fields.
 the whole map; use a map entry of `null` or `""` to remove that model while preserving other
 entries. Unrelated provider saves preserve previously configured values.
 
+These two fields are reachable today from `config.json` and the provider management API only:
+the Dashboard provider editor does not render inputs for them yet, so a browser-only workflow
+cannot change them after the fact.
+
 ### Discovered model display names
 
 Use `modelDisplayNames` when a provider returns machine friendly ids but the Codex model picker

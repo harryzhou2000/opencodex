@@ -1906,8 +1906,9 @@ export function applyConfiguredAutoReviewModelOverride(
     const modelSegment = catalogEntryModelSegment(entry);
     const perModel = modelSegment === undefined ? undefined : plan.perModel.get(providerModelKey(modelSegment));
     const selected = perModel ?? plan.wide;
-    if (selected) stampProviderAutoReviewOverride(entry, selected.target);
-    if (selected || (perModel !== undefined)) providerStamped.add(entry);
+    if (!selected) continue;
+    stampProviderAutoReviewOverride(entry, selected.target);
+    providerStamped.add(entry);
   }
   const rootResult = applyRootSelectorToRemaining(models, rootAutoReviewModel, providerStamped);
   const providerApplied = [...providerStamped].some(entry => typeof entry.auto_review_model_override === "string");
