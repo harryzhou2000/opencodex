@@ -1524,7 +1524,7 @@ describe("provider management validation", () => {
     }
   });
 
-  test("canonical openai PATCH rejects auto-review fields in every clear form", async () => {
+  test("canonical openai PATCH and POST reject auto-review fields in every clear form", async () => {
     if (existsSync(TEST_DIR)) removeTreeWithRetry(TEST_DIR);
     mkdirSync(TEST_DIR, { recursive: true });
     process.env.OPENCODEX_HOME = TEST_DIR;
@@ -1552,6 +1552,21 @@ describe("provider management validation", () => {
           method: "PATCH",
           headers: { "content-type": "application/json" },
           body: JSON.stringify(body),
+        });
+        expect(response.status).toBe(400);
+        expect(await response.json()).toMatchObject({ error: expect.stringContaining("autoReviewModel") });
+      }
+      // POST carries the same prohibition: the clear forms are normalized away before the
+      // merged-row guard, so they have to be rejected on the submitted body instead.
+      for (const body of [
+        { autoReviewModel: null },
+        { autoReviewModelOverrides: {} },
+        { autoReviewModelOverrides: { "glm-5.2": null } },
+      ]) {
+        const response = await fetch(new URL("/api/providers", server.url), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ name: "openai", provider: { ...canonicalDirect, ...body } }),
         });
         expect(response.status).toBe(400);
         expect(await response.json()).toMatchObject({ error: expect.stringContaining("autoReviewModel") });
