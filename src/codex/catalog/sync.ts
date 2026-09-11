@@ -1823,6 +1823,20 @@ function providerModelKey(modelId: string): string {
   return canonicalAutoReviewModelKey(modelId);
 }
 
+/**
+ * True when another routed row of this provider already carries `alias` as its own model id.
+ *
+ * The alias API validates against whatever ids discovery has reported so far, so on a cold start an
+ * alias can be persisted that later turns out to name a different row. A key using it is then not
+ * an alternate spelling of the aliased model — it is that row's id — and must not be propagated.
+ */
+function aliasNamesAnotherRoutedRow(models: readonly RawEntry[], provider: string, alias: string): boolean {
+  const encoded = encodeRoutedModelId(alias);
+  return models.some(entry => isRoutedCatalogEntry(entry)
+    && catalogEntryProviderName(entry) === provider
+    && catalogEntryModelSegment(entry) === encoded);
+}
+
 /** Resolve one configured target against the assembled catalog; bare values name a model of the same provider. */
 function resolveProviderReviewTarget(
   models: readonly RawEntry[],
@@ -1909,6 +1923,7 @@ function buildProviderReviewPlans(
     // carries the upstream id — so accept an override key written in either spelling.
     for (const [modelId, alias] of Object.entries(provider.modelAliases ?? {})) {
       if (typeof alias !== "string" || !alias.trim()) continue;
+      if (aliasNamesAnotherRoutedRow(models, name, alias)) continue;
       const idKey = providerModelKey(modelId);
       const aliasKey = providerModelKey(alias);
       if (idKey === aliasKey) continue;

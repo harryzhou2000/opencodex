@@ -7630,6 +7630,29 @@ describe("provider-level auto_review_model overrides", () => {
     expect(result).toBe("applied");
     expect(models.find(row => row.slug === "blsc/pin-model")?.auto_review_model_override).toBe("gpt-5.6-terra");
   });
+
+  test("an alias that names another routed row is not propagated", () => {
+    const models: Array<Record<string, unknown>> = [
+      { slug: "gpt-5.6-terra", auto_review_model_override: null },
+      { slug: "blsc/pin-model", auto_review_model_override: null },
+      { slug: "blsc/friendly", auto_review_model_override: null },
+    ];
+    const result = applyConfiguredAutoReviewModelOverride(models, null, {
+      providers: {
+        blsc: {
+          adapter: "openai-chat",
+          baseUrl: "https://blsc.example.test/v1",
+          // Persisted on a cold start, before discovery reported the row that owns "friendly".
+          modelAliases: { "pin-model": "friendly" },
+          autoReviewModelOverrides: { friendly: "gpt-5.6-terra" },
+        },
+      },
+    });
+    expect(result).toBe("applied");
+    // The key names the row that literally carries it; the colliding alias is not propagated to it.
+    expect(models.find(row => row.slug === "blsc/friendly")?.auto_review_model_override).toBe("gpt-5.6-terra");
+    expect(models.find(row => row.slug === "blsc/pin-model")?.auto_review_model_override).toBeNull();
+  });
 });
 
 import { ManagementRequest as Request } from "../helpers/management-auth";
