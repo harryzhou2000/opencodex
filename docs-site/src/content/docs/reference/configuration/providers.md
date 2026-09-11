@@ -270,7 +270,9 @@ has the operator workflow and a worked example.
 
 `autoReviewModel` is the provider-wide reviewer target. A value can be a bare model id of that same
 provider (the catalog row is normalized to the `provider/model` slug) or a full public catalog
-slug such as `opencode-go/deepseek-v4-flash`. `autoReviewModelOverrides` keys are exact upstream
+slug such as `opencode-go/deepseek-v4-flash`. A bare value resolves against that provider's rows
+first and then against a bare catalog row, which is how a native model such as `gpt-5.6-terra` is
+named; a value that matches neither is left unresolved. `autoReviewModelOverrides` keys are exact upstream
 model ids of that provider; an entry wins over the provider-wide value for its model. A provider
 stamp wins over the root selector on its own routed rows, and the root selector remains the
 fallback for native rows and routed rows without a provider stamp. Removing a provider selector

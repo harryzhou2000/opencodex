@@ -1023,6 +1023,11 @@ single upstream model id and wins over it. A value is either a bare model id of 
 or a public catalog slug such as `opencode-go/deepseek-v4-flash`, and a provider stamp wins over the
 root selector on its own rows while the root selector stays the fallback elsewhere.
 
+A bare value resolves against the provider's own rows first and then against a bare catalog row,
+which is how a native model such as `gpt-5.6-terra` is named; a value that matches neither is left
+unresolved. Giving the full slug avoids the question entirely when the reviewer is another provider's
+routed model.
+
 Selectors are resolved against the final catalog on the next sync. An unknown target fails closed:
 that override is skipped, a diagnostic is printed, and normal upstream auto-review behavior stays
 in place. Removing the root selector leaves provider stamps alone, and removing a provider selector
