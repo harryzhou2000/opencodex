@@ -264,26 +264,11 @@ optional pin in a hand-edited file is ignored on load without discarding the res
 
 Codex reads `auto_review_model_override` from the catalog row of the current turn's model to
 choose the model that reviews approval requests. The root `auto_review_model` setting in
-`$CODEX_HOME/config.toml` applies one reviewer to every catalog row. When different routed
-providers should use different (usually cheaper) reviewers, add provider-scoped selectors to the
-provider row in `config.json` instead:
+`$CODEX_HOME/config.toml` applies one reviewer to every catalog row; the provider-scoped fields
+below override it per provider. The [provider guide](/guides/providers/#approval-reviewer-per-provider)
+has the operator workflow and a worked example.
 
-```json
-{
-  "providers": {
-    "blsc": {
-      "adapter": "openai-chat",
-      "baseUrl": "https://llmapi.blsc.cn",
-      "autoReviewModel": "opencode-go/deepseek-v4-flash",
-      "autoReviewModelOverrides": {
-        "kimi-k3": "gpt-5.6-terra"
-      }
-    }
-  }
-}
-```
-
-`autoReviewModel` is the provider-wide target. A value can be a bare model id of that same
+`autoReviewModel` is the provider-wide reviewer target. A value can be a bare model id of that same
 provider (the catalog row is normalized to the `provider/model` slug) or a full public catalog
 slug such as `opencode-go/deepseek-v4-flash`. `autoReviewModelOverrides` keys are exact upstream
 model ids of that provider; an entry wins over the provider-wide value for its model. A provider

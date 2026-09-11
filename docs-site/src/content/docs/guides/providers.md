@@ -999,6 +999,40 @@ dashboard or `custom` in `ocx init` and enter the base URL. See the
 [Configuration reference](/reference/configuration/) for every provider field
 (`headers`, `noReasoningModels`, `noVisionModels`, `models`, …).
 
+## Approval reviewer per provider
+
+Codex asks a second model to review approval requests, and takes that reviewer from
+`auto_review_model_override` on the catalog row of the current turn's model. The root
+`auto_review_model` in `$CODEX_HOME/config.toml` applies one reviewer to every row. To give a
+routed provider its own — usually cheaper — reviewer, set the selector on that provider row in
+`~/.opencodex/config.json`:
+
+```json
+{
+  "providers": {
+    "blsc": {
+      "autoReviewModel": "opencode-go/deepseek-v4-flash",
+      "autoReviewModelOverrides": { "kimi-k3": "gpt-5.6-terra" }
+    }
+  }
+}
+```
+
+`autoReviewModel` covers every routed row of the provider. `autoReviewModelOverrides` targets a
+single upstream model id and wins over it. A value is either a bare model id of that same provider
+or a public catalog slug such as `opencode-go/deepseek-v4-flash`, and a provider stamp wins over the
+root selector on its own rows while the root selector stays the fallback elsewhere.
+
+Selectors are resolved against the final catalog on the next sync. An unknown target fails closed:
+that override is skipped, a diagnostic is printed, and normal upstream auto-review behavior stays
+in place. Removing the root selector leaves provider stamps alone, and removing a provider selector
+clears only that provider's stamps.
+
+These fields are configuration/API only — `PATCH /api/providers?name=<provider>` accepts them and
+the dashboard provider editor does not render inputs for them yet. The canonical `openai` provider
+rejects them. Field-by-field rules live in the
+[provider configuration reference](/reference/configuration/providers/#auto-review-approval-model-selection).
+
 ## Rate limits in the providers overview
 
 The **Rate limits** section of the Providers overview shows live utilization
