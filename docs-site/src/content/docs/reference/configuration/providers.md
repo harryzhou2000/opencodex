@@ -280,9 +280,12 @@ fallback for native rows and routed rows without a provider stamp. Removing a pr
 clears only that provider's stamps; removing the root selector never clears provider stamps.
 Model ids that contain a slash may be written raw or in their encoded catalog form; both
 spellings resolve to the same routed row.
-Selectors are resolved against the final catalog on each sync: an unknown target fails closed
-for the override only, emits a diagnostic, and leaves normal upstream auto-review behavior in
-place. The canonical `openai` provider does not accept these fields.
+Selectors are resolved against the final catalog on each sync, independently of one another, and
+each fails closed on its own: an unresolved `autoReviewModel` emits a diagnostic and stamps no
+provider-wide rows, an unresolved `autoReviewModelOverrides` entry emits a diagnostic and stamps
+nothing for that model, and any selector that does resolve is still applied. Rows without a provider
+stamp keep the root selector, or normal upstream auto-review behavior when that is unset. The
+canonical `openai` provider does not accept these fields.
 
 Removing the root selector clears root stamps from every row, including native rows stamped by
 earlier releases that predate OpenCodex's provenance marker. That cleanup recognizes a legacy

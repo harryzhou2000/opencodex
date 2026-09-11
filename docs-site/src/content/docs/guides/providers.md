@@ -1029,10 +1029,12 @@ unresolved, and a bare value that lands outside the provider prints a note namin
 supplies the reviewer. Giving the full slug avoids the question entirely when the reviewer is
 another provider's routed model.
 
-Selectors are resolved against the final catalog on the next sync. An unknown target fails closed:
-that override is skipped, a diagnostic is printed, and normal upstream auto-review behavior stays
-in place. Removing the root selector leaves provider stamps alone, and removing a provider selector
-clears only that provider's stamps.
+Selectors are resolved against the final catalog on the next sync, each one on its own, and each
+fails closed by itself: an unresolved `autoReviewModel` prints a diagnostic and stamps no
+provider-wide rows, an unresolved `autoReviewModelOverrides` entry prints a diagnostic and stamps
+nothing for that model, and whatever does resolve is still applied. Rows without a provider stamp
+keep the root selector, or upstream behavior when that is unset. Removing the root selector leaves
+provider stamps alone, and removing a provider selector clears only that provider's stamps.
 
 These fields are configuration/API only — `PATCH /api/providers?name=<provider>` accepts them and
 the dashboard provider editor does not render inputs for them yet. The canonical `openai` provider
