@@ -7502,6 +7502,41 @@ describe("provider-level auto_review_model overrides", () => {
     expect(models.find(row => row.slug === "gpt-5.6-terra")?.auto_review_model_override)
       .toBe("user-pinned-reviewer");
   });
+
+  test("an override key written with a slash matches the encoded routed row", () => {
+    const models: Array<Record<string, unknown>> = [
+      { slug: "gpt-5.6-terra", auto_review_model_override: null },
+      { slug: "zenmux/moonshotai-kimi-k3", auto_review_model_override: null },
+      { slug: "zenmux/other-model", auto_review_model_override: null },
+    ];
+    const result = applyConfiguredAutoReviewModelOverride(models, null, {
+      providers: {
+        zenmux: {
+          adapter: "openai-chat",
+          baseUrl: "https://zenmux.example.test/v1",
+          autoReviewModel: "other-model",
+          autoReviewModelOverrides: { "moonshotai/kimi-k3": "gpt-5.6-terra" },
+        },
+      },
+    });
+    expect(result).toBe("applied");
+    expect(models.find(row => row.slug === "zenmux/moonshotai-kimi-k3")?.auto_review_model_override)
+      .toBe("gpt-5.6-terra");
+    expect(models.find(row => row.slug === "zenmux/other-model")?.auto_review_model_override)
+      .toBe("zenmux/other-model");
+  });
+
+  test("a bare selector never resolves to another provider's routed row", () => {
+    const models: Array<Record<string, unknown>> = [
+      { slug: "other/glm-5.2", auto_review_model_override: null },
+      { slug: "blsc/kimi-k3", auto_review_model_override: null },
+    ];
+    const result = applyConfiguredAutoReviewModelOverride(models, null, config({ autoReviewModel: "glm-5.2" }));
+    // Bare selectors name this provider's model or a bare catalog row, never a sibling provider's
+    // encoded slug; an unresolvable one fails closed instead of borrowing the other row.
+    expect(result).toBe("unresolved");
+    expect(models.every(row => row.auto_review_model_override === null)).toBe(true);
+  });
 });
 
 import { ManagementRequest as Request } from "../helpers/management-auth";

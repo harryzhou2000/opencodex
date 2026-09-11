@@ -750,6 +750,42 @@ describe("provider management validation", () => {
     expect(liveConfig.providers.relay).not.toHaveProperty("autoReviewModelOverrides");
   });
 
+  test("a clear sharing a normalized key with a set is rejected instead of racing on order", async () => {
+    if (existsSync(TEST_DIR)) removeTreeWithRetry(TEST_DIR);
+    mkdirSync(TEST_DIR, { recursive: true });
+    process.env.OPENCODEX_HOME = TEST_DIR;
+    const liveConfig: OcxConfig = {
+      port: 0,
+      hostname: "127.0.0.1",
+      defaultProvider: "relay",
+      providers: {
+        relay: { adapter: "openai-chat", baseUrl: "https://relay.example/v1" },
+      },
+    };
+    saveConfig(liveConfig);
+    const request = async (body: Record<string, unknown>) => {
+      const req = new Request("http://127.0.0.1/api/providers?name=relay", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      return handleManagementAPI(req, new URL(req.url), liveConfig, {
+        createManagementConvergeCodex: catalogConvergenceFactory(),
+      });
+    };
+
+    for (const overrides of [
+      { "glm-5.2": null, "GLM-5.2": "gpt-test" },
+      { "GLM-5.2": "gpt-test", "glm-5.2": null },
+      { "glm-5.2": null, "GLM-5.2": null },
+    ]) {
+      const response = await request({ autoReviewModelOverrides: overrides });
+      expect(response?.status).toBe(400);
+      expect(await response?.json()).toMatchObject({ error: expect.stringContaining("unique") });
+    }
+    expect(liveConfig.providers.relay).not.toHaveProperty("autoReviewModelOverrides");
+  });
+
   test("canonical openai provider rejects auto-review fields", async () => {
     expect(providerManagementConfigError("openai", {
       ...canonicalDirect,

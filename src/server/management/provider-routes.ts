@@ -544,6 +544,12 @@ function applyProviderPatchFields(
       for (const [model, target] of Object.entries(value)) {
         const key = model.trim();
         const canonicalKey = canonicalAutoReviewModelKey(model);
+        // Uniqueness is enforced before the tombstone branch: a clear and a set that normalize to
+        // the same key would otherwise resolve in object order instead of being rejected.
+        if (submittedCanonicalKeys.has(canonicalKey)) {
+          return { error: "autoReviewModelOverrides keys must be unique after trimming and slash normalization" };
+        }
+        submittedCanonicalKeys.add(canonicalKey);
         if (target === null || target === "") {
           const previousKey = existingByCanonical.get(canonicalKey);
           if (previousKey !== undefined) delete merged[previousKey];
@@ -553,10 +559,6 @@ function applyProviderPatchFields(
         if (typeof target !== "string" || !target.trim()) {
           return { error: "autoReviewModelOverrides values must be catalog selectors, null, or empty to remove" };
         }
-        if (submittedCanonicalKeys.has(canonicalKey)) {
-          return { error: "autoReviewModelOverrides keys must be unique after trimming and slash normalization" };
-        }
-        submittedCanonicalKeys.add(canonicalKey);
         const previousKey = existingByCanonical.get(canonicalKey);
         if (previousKey !== undefined && previousKey !== key) delete merged[previousKey];
         merged[key] = target.trim();
