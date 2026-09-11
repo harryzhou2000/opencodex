@@ -1638,7 +1638,7 @@ function legacyRootStampValues(observedModels: readonly RawEntry[]): ReadonlySet
 }
 
 /**
- * Sweep legacy root stamps off the rows a provider plan is about to restamp.
+ * Sweep legacy root stamps off the rows a root removal owns, before provider plans land.
  *
  * Root removal reaches marker-tagged native rows on its own, but a catalog written before the
  * marker only carries the legacy signature — and provider stamping rewrites that signature before

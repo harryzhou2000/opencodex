@@ -7537,6 +7537,33 @@ describe("provider-level auto_review_model overrides", () => {
     expect(result).toBe("unresolved");
     expect(models.every(row => row.auto_review_model_override === null)).toBe(true);
   });
+
+  test("the legacy sweep leaves no trace while a root selector resolves", () => {
+    const sourceModels: Array<Record<string, unknown>> = [
+      { slug: "gpt-5.6-terra", auto_review_model_override: "legacy-root" },
+      { slug: "blsc/glm-5.2", auto_review_model_override: "legacy-root" },
+    ];
+    const models: Array<Record<string, unknown>> = [
+      { slug: "gpt-5.6-terra", auto_review_model_override: "legacy-root" },
+      { slug: "blsc/glm-5.2", auto_review_model_override: null },
+      { slug: "opencode-go/deepseek-v4-flash", auto_review_model_override: null },
+    ];
+    const result = applyConfiguredAutoReviewModelOverride(
+      models,
+      "gpt-5.6-terra",
+      config({ autoReviewModel: "opencode-go/deepseek-v4-flash" }),
+      sourceModels,
+    );
+    expect(result).toBe("applied");
+    // Every non-provider row ends on the root value and each provider row on the plan target, so
+    // the sweep is invisible once the root selector resolves.
+    expect(models.find(row => row.slug === "gpt-5.6-terra")?.auto_review_model_override).toBe("gpt-5.6-terra");
+    expect(models.find(row => row.slug === "opencode-go/deepseek-v4-flash")?.auto_review_model_override)
+      .toBe("gpt-5.6-terra");
+    expect(models.find(row => row.slug === "blsc/glm-5.2")?.auto_review_model_override)
+      .toBe("opencode-go/deepseek-v4-flash");
+    expect(models.some(row => row.auto_review_model_override === "legacy-root")).toBe(false);
+  });
 });
 
 import { ManagementRequest as Request } from "../helpers/management-auth";
