@@ -1596,6 +1596,7 @@ export function isValidAutoReviewModel(value: unknown): value is string {
 
 export type AutoReviewModelOverrideResult = "absent" | "applied" | "invalid" | "unresolved";
 
+/** True when a catalog row was synthesized by opencodex instead of coming from upstream. */
 function isRoutedCatalogEntry(entry: RawEntry): boolean {
   const slug = typeof entry.slug === "string" ? entry.slug : "";
   return slug.includes("/")
@@ -1653,6 +1654,10 @@ function clearLegacyRootStamps(models: readonly RawEntry[], sourceModels: readon
   }
 }
 
+/**
+ * Clear the root selector from every row this path owns: routed rows, rows stamped by a release
+ * that writes the provenance marker, and the legacy whole-catalog stamp that predates it.
+ */
 function clearAutoReviewModelOverride(
   models: readonly RawEntry[],
   sourceModels: readonly RawEntry[] = [],
@@ -1735,6 +1740,10 @@ function stampProviderAutoReviewOverride(entry: RawEntry, target: string): void 
   delete entry[AUTO_REVIEW_ROOT_MARKER];
 }
 
+/**
+ * Apply the root Codex auto-review selector to every catalog row, or clear it when the value is
+ * absent, blank, malformed, or does not resolve against the assembled catalog.
+ */
 export function applyAutoReviewModelOverride(
   models: RawEntry[] | undefined,
   autoReviewModel: string | null | undefined,
