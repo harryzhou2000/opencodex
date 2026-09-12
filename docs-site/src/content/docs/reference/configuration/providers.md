@@ -278,8 +278,11 @@ keys are exact upstream model ids of that provider, or the provider's published 
 (`modelAliases`); either spelling names the same routed row, whose slug carries the upstream id. An
 entry wins over the provider-wide value for its model. A provider
 stamp wins over the root selector on its own routed rows, and the root selector remains the
-fallback for native rows and routed rows without a provider stamp. Removing a provider selector
-clears only that provider's stamps; removing the root selector never clears provider stamps.
+fallback for native rows and routed rows without a provider stamp.
+Removing a provider selector falls back field by field: clearing `autoReviewModel` drops
+provider-wide stamps from rows that have no per-model override, clearing an `autoReviewModelOverrides`
+entry drops that model's stamp so it takes the provider-wide selector when one is configured, and
+clearing both drops every provider stamp. Removing the root selector never clears provider stamps.
 Model ids that contain a slash may be written raw or in their encoded catalog form; both
 spellings resolve to the same routed row.
 Selectors are resolved against the final catalog on each sync, independently of one another, and

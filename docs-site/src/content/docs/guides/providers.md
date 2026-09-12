@@ -1023,6 +1023,11 @@ single upstream model id and wins over it. A value is either a bare model id of 
 or a public catalog slug such as `opencode-go/deepseek-v4-flash`, and a provider stamp wins over the
 root selector on its own rows while the root selector stays the fallback elsewhere.
 
+An override key may be written as the upstream model id or as the provider's published alias, and an
+id that contains a slash may be written raw or in its encoded catalog form — the
+[configuration reference](/reference/configuration/providers/#auto-review-approval-model-selection)
+lists those field-level rules.
+
 A bare value resolves against the provider's own rows first and then against a bare catalog row,
 which is how a native model such as `gpt-5.6-terra` is named; a value that matches neither is left
 unresolved, and a bare value that lands outside the provider prints a note naming the row that
@@ -1033,8 +1038,12 @@ Selectors are resolved against the final catalog on the next sync, each one on i
 fails closed by itself: an unresolved `autoReviewModel` prints a diagnostic and stamps no
 provider-wide rows, an unresolved `autoReviewModelOverrides` entry prints a diagnostic and stamps
 nothing for that model, and whatever does resolve is still applied. Rows without a provider stamp
-keep the root selector, or upstream behavior when that is unset. Removing the root selector leaves
-provider stamps alone, and removing a provider selector clears only that provider's stamps.
+keep the root selector, or upstream behavior when that is unset.
+
+Removing a provider selector falls back field by field: clearing `autoReviewModel` drops
+provider-wide stamps from rows that have no per-model override, clearing an `autoReviewModelOverrides`
+entry drops that model's stamp so it takes the provider-wide selector when one is configured, and
+clearing both drops every provider stamp. Removing the root selector never clears provider stamps.
 
 These fields are configuration/API only — `PATCH /api/providers?name=<provider>` accepts them and
 the dashboard provider editor does not render inputs for them yet. The canonical `openai` provider
